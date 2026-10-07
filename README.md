@@ -1,4 +1,4 @@
-# ModernReader - An Diptyx E-Reader Firmware
+# ModernReader - A Diptyx E-Reader Firmware
 
 **A community firmware fork for the Diptyx E-reader**  
 Modern Reader **1.0.1** is based on the original Diptyx firmware **1.0.2**.
@@ -25,9 +25,9 @@ The full release-by-release details are in [`firmware_source/CHANGELOG.md`](firm
 
 ## Release 1.0.1
 
-The [v1.0.1 GitHub release](https://github.com/nekookto/ModernReader-An-Diptyx-E-Reader-Firmware/releases/tag/modern-reader-v1.0.1) provides a **full clean-install** image, an app-only image, the matching assets image, and a SHA-256 manifest. For an update that preserves user data while also refreshing the built-in Manual and Firmware info, flash the app-only and assets files separately at the addresses in [Flashing](#flashing).
+The [v1.0.1 GitHub release](https://github.com/nekookto/ModernReader-Diptyx/releases/tag/modern-reader-v1.0.1) provides a **full clean-install** image, an app-only image, the matching assets image, and a SHA-256 manifest. For an update that preserves user data while also refreshing the built-in Manual and Firmware info, flash the app-only and assets files separately at the addresses in [Flashing](#flashing).
 
-The [v1.0.0 release](https://github.com/nekookto/ModernReader-An-Diptyx-E-Reader-Firmware/releases/tag/modern-reader-v1.0.0) remains available.
+The [v1.0.0 release](https://github.com/nekookto/ModernReader-Diptyx/releases/tag/modern-reader-v1.0.0) remains available.
 
 ## UI previews
 
@@ -70,9 +70,9 @@ To enter the device’s USB flash mode, turn it fully off for about 20 seconds, 
 
 | File | Flash address | What it does |
 | --- | ---: | --- |
-| `ModernReader_v1.0.1_merged.bin` ([GitHub release](https://github.com/nekookto/ModernReader-An-Diptyx-E-Reader-Firmware/releases/tag/modern-reader-v1.0.1)) | `0x0000` | Prebuilt Modern Reader 1.0.1 full clean install. Includes bootloader, partition table, application, and assets; overwrites device flash and erases existing settings, book data, and metadata. |
-| `ModernReader_v1.0.1_firmware.bin` ([GitHub release](https://github.com/nekookto/ModernReader-An-Diptyx-E-Reader-Firmware/releases/tag/modern-reader-v1.0.1)) or `firmware_source/.pio/build/esp32-s3-devkitm-1/firmware.bin` | `0x10000` | Updates the application while preserving existing settings and book storage. |
-| `ModernReader_v1.0.1_assets-littlefs.bin` ([GitHub release](https://github.com/nekookto/ModernReader-An-Diptyx-E-Reader-Firmware/releases/tag/modern-reader-v1.0.1)) or `firmware_source/.pio/build/esp32-s3-devkitm-1/littlefs.bin` | `0x910000` | Updates only the 1 MB assets partition containing the built-in Manual and Firmware info EPUBs. |
+| `ModernReader_v1.0.1_merged.bin` ([GitHub release](https://github.com/nekookto/ModernReader-Diptyx/releases/tag/modern-reader-v1.0.1)) | `0x0000` | Prebuilt Modern Reader 1.0.1 full clean install. Includes bootloader, partition table, application, and assets; overwrites device flash and erases existing settings, book data, and metadata. |
+| `ModernReader_v1.0.1_firmware.bin` ([GitHub release](https://github.com/nekookto/ModernReader-Diptyx/releases/tag/modern-reader-v1.0.1)) or `firmware_source/.pio/build/esp32-s3-devkitm-1/firmware.bin` | `0x10000` | Updates the application while preserving existing settings and book storage. |
+| `ModernReader_v1.0.1_assets-littlefs.bin` ([GitHub release](https://github.com/nekookto/ModernReader-Diptyx/releases/tag/modern-reader-v1.0.1)) or `firmware_source/.pio/build/esp32-s3-devkitm-1/littlefs.bin` | `0x910000` | Updates only the 1 MB assets partition containing the built-in Manual and Firmware info EPUBs. |
 | `firmware_source/.pio/build/esp32-s3-devkitm-1/merged.bin` | `0x0000` | Full merged image produced by a source build. Like the prebuilt image, it overwrites device flash; back up first. |
 
 To update the app **and** built-in EPUBs while preserving books and settings, flash the app and assets as two separate files at `0x10000` and `0x910000`. Do not concatenate them into a flat image: the `bookStorage` partition occupies `0x610000–0x910000`, and a padded combined image would overwrite it. The app-only image may be used by itself if the built-in EPUBs do not need updating.
