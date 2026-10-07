@@ -54,7 +54,7 @@ def dither(draw, box, step=5, shade="#c8c8c3"):
 def header(draw, title="", crumb="", main=False):
     if main:
         text(draw, (22, 17), "modern reader", 27, True)
-        text(draw, (395, 25), "v1.0.0", 14, False)
+        text(draw, (395, 25), "v1.0.1", 14, False)
         dither(draw, (20, 59, 452, 68), 5)
         draw.rectangle((20, 70, 452, 72), fill=INK)
     else:
@@ -262,6 +262,8 @@ def settings_right(draw):
 def chapter_left(draw):
     text(draw, (24, 18), "CONTENTS", 14, True)
     text(draw, (24, 43), "Chapters", 28, True)
+    draw.rounded_rectangle((380, 43, 460, 70), radius=13, outline=INK, width=1)
+    text(draw, (395, 49), "3 / 15", 13, True)
     draw.rectangle((20, 76, 452, 78), fill=INK)
     titles = [
         "Chapter 1  ·  Awake",
@@ -280,16 +282,17 @@ def chapter_left(draw):
         if i == 2:
             draw.rounded_rectangle((20, y - 4, 452, y + 32), radius=6, fill=INK)
             text(draw, (34, y + 3), title, 15, True, PAPER)
+            draw.rectangle((26, y + 10, 32, y + 16), fill=PAPER)
         else:
             text(draw, (34, y + 3), fitted(draw, title, 395, 15), 15)
             draw.line((34, y + 33, 440, y + 33), fill="#deded9", width=1)
-    text(draw, (26, 611), "‹ Back", 13, True)
-    text(draw, (332, 611), "Select chapter  ›", 13, True)
+    draw.rounded_rectangle((20, 604, 258, 632), radius=14, outline=INK, width=1)
+    text(draw, (32, 611), "Middle: open   Left: back", 12, True)
 
 
 def chapter_right(draw):
-    text(draw, (24, 18), "CONTENTS", 14, True)
-    text(draw, (24, 43), "Chapters · continued", 25, True)
+    text(draw, (24, 18), "CONTENTS · CONTINUED", 14, True)
+    text(draw, (24, 43), "Chapters", 28, True)
     draw.rectangle((20, 76, 452, 78), fill=INK)
     titles = [
         "Chapter 11  ·  The final test",
@@ -301,9 +304,8 @@ def chapter_right(draw):
         y = 92 + i * 45
         text(draw, (34, y + 3), fitted(draw, title, 395, 15), 15)
         draw.line((34, y + 33, 440, y + 33), fill="#deded9", width=1)
-    draw.rounded_rectangle((24, 566, 362, 598), radius=14, outline=INK, width=1)
-    text(draw, (37, 574), "Double-tap Up / Down to page", 13, True)
-    text(draw, (408, 612), "84%", 12, True)
+    draw.rounded_rectangle((20, 604, 270, 632), radius=14, outline=INK, width=1)
+    text(draw, (32, 611), "Double-tap Up / Down: page", 12, True)
 
 
 def main():

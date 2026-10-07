@@ -1,1 +1,0 @@
-Here, the circuit schematics and pcb design will be uploaded

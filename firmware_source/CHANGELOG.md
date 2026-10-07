@@ -3,6 +3,17 @@
 A running log of what differs from the original Diptyx firmware (base: Diptyx firmware 1.0.2).
 The same text is shown on the device under Settings -> Firmware info. Newest release first.
 
+## 1.0.1
+
+### Reading interface
+- Updated the full-screen chapter list to match the Modern Reader menu style: consistent two-level headers on both pages, a selected-position counter, clearer row separators, a rounded selected row, and a visible continuation header on the right page.
+
+### Firmware info
+- Rebuilt the on-device firmware-info EPUB from this complete running change log. The version history now flows as one continuous EPUB section instead of several short sections that often left one screen page blank. All earlier release entries remain included.
+
+### Build
+- Added the ESP-IDF component lock file so the TinyUSB component resolves to the same version in future builds.
+
 ## 1.0.0
 
 ### Library

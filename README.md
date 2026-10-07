@@ -1,11 +1,13 @@
 # ModernReader - An Diptyx E-Reader Firmware
 
 **A community firmware fork for the Diptyx E-reader**  
-Modern Reader **1.0.0** is based on the original Diptyx firmware **1.0.2**.
+Modern Reader **1.0.1** is based on the original Diptyx firmware **1.0.2**.
 
 Modern Reader keeps the original e-reader hardware and adds a more useful library, a redesigned two-page menu, improved EPUB image support, and fixes for USB and SD-card reliability. It is an independent project—not an official Diptyx release.
 
-> **Important:** This firmware is intended for the Diptyx E-reader hardware. The binaries in `firmware_release/` named `diptyx_firmware_*.bin` are unchanged upstream Diptyx releases, not Modern Reader builds. The Modern Reader 1.0.0 clean-install image is [`firmware_release/ModernReader_v1.0.0_merged.bin`](firmware_release/ModernReader_v1.0.0_merged.bin); see [Flashing](#flashing) before using it.
+Version 1.0.1 refines the two-page chapter browser, fixes the built-in change log layout so version history flows continuously across both displays, and locks the ESP-IDF TinyUSB component for repeatable builds.
+
+> **Important:** This firmware is intended for the Diptyx E-reader hardware. Download Modern Reader binaries from the [GitHub Releases page](https://github.com/nekookto/ModernReader-An-Diptyx-E-Reader-Firmware/releases), not from the original Diptyx firmware releases. See [Flashing](#flashing) before installing.
 
 ## What’s new compared with Diptyx 1.0.2
 
@@ -21,9 +23,11 @@ Modern Reader keeps the original e-reader hardware and adds a more useful librar
 
 The full release-by-release details are in [`firmware_source/CHANGELOG.md`](firmware_source/CHANGELOG.md). The changes are also available on-device under **Settings → Firmware info**.
 
-## Release 1.0.0
+## Release 1.0.1
 
-The prebuilt **full clean-install** image is [`ModernReader_v1.0.0_merged.bin`](firmware_release/ModernReader_v1.0.0_merged.bin), with its [SHA-256 checksum](firmware_release/ModernReader_v1.0.0_merged.bin.sha256). It contains the bootloader, partition table, Modern Reader application, and built-in Manual/Firmware info assets. This is a full-flash image, not an in-place update; it erases existing device data.
+The [v1.0.1 GitHub release](https://github.com/nekookto/ModernReader-An-Diptyx-E-Reader-Firmware/releases/tag/modern-reader-v1.0.1) provides a **full clean-install** image, an app-only image, the matching assets image, and a SHA-256 manifest. For an update that preserves user data while also refreshing the built-in Manual and Firmware info, flash the app-only and assets files separately at the addresses in [Flashing](#flashing).
+
+The [v1.0.0 release](https://github.com/nekookto/ModernReader-An-Diptyx-E-Reader-Firmware/releases/tag/modern-reader-v1.0.0) remains available.
 
 ## UI previews
 
@@ -49,11 +53,14 @@ The firmware is built with PlatformIO and ESP-IDF. Install [PlatformIO](https://
 
 ```sh
 cd firmware_source
+python scripts/build_firmware_info_epub.py
 pio run -t buildfs
 pio run
 ```
 
-The project pins `espressif32@6.13.0` and `esp_littlefs` v1.20.4. Build outputs are placed under `firmware_source/.pio/build/esp32-s3-devkitm-1/`. The `pio run` post-build script also assembles `merged.bin` from the bootloader, partition table, application, and assets image.
+When changing the change log, keep older version sections in `CHANGELOG.md` and add the new version at the top. The script rebuilds `data/firmwareVersion.epub` as one continuous flow, preventing short per-version EPUB sections from leaving a display page empty. Then build the assets and firmware as above.
+
+The project pins `espressif32@6.13.0`, `esp_littlefs` v1.20.4, and the ESP-IDF TinyUSB component in `firmware_source/dependencies.lock`. Build outputs are placed under `firmware_source/.pio/build/esp32-s3-devkitm-1/`. The `pio run` post-build script also assembles `merged.bin` from the bootloader, partition table, application, and assets image.
 
 ## Flashing
 
@@ -63,24 +70,25 @@ To enter the device’s USB flash mode, turn it fully off for about 20 seconds, 
 
 | File | Flash address | What it does |
 | --- | ---: | --- |
-| `firmware_release/ModernReader_v1.0.0_merged.bin` | `0x0000` | Prebuilt Modern Reader 1.0.0 full clean install. Includes bootloader, partition table, application, and assets; overwrites device flash and erases existing settings, book data, and metadata. |
-| `firmware_source/.pio/build/esp32-s3-devkitm-1/firmware.bin` | `0x10000` | Updates the application. This is the usual source-build path when you want to keep the existing settings and book storage. |
-| `firmware_release/modern-reader-assets-littlefs.bin` | `0x910000` | Updates only the 1 MB assets partition containing the built-in Manual and Firmware info EPUBs. It does not replace the application or the separate book-storage partition. |
+| `ModernReader_v1.0.1_merged.bin` ([GitHub release](https://github.com/nekookto/ModernReader-An-Diptyx-E-Reader-Firmware/releases/tag/modern-reader-v1.0.1)) | `0x0000` | Prebuilt Modern Reader 1.0.1 full clean install. Includes bootloader, partition table, application, and assets; overwrites device flash and erases existing settings, book data, and metadata. |
+| `ModernReader_v1.0.1_firmware.bin` ([GitHub release](https://github.com/nekookto/ModernReader-An-Diptyx-E-Reader-Firmware/releases/tag/modern-reader-v1.0.1)) or `firmware_source/.pio/build/esp32-s3-devkitm-1/firmware.bin` | `0x10000` | Updates the application while preserving existing settings and book storage. |
+| `ModernReader_v1.0.1_assets-littlefs.bin` ([GitHub release](https://github.com/nekookto/ModernReader-An-Diptyx-E-Reader-Firmware/releases/tag/modern-reader-v1.0.1)) or `firmware_source/.pio/build/esp32-s3-devkitm-1/littlefs.bin` | `0x910000` | Updates only the 1 MB assets partition containing the built-in Manual and Firmware info EPUBs. |
 | `firmware_source/.pio/build/esp32-s3-devkitm-1/merged.bin` | `0x0000` | Full merged image produced by a source build. Like the prebuilt image, it overwrites device flash; back up first. |
 
-The supplied `modern-reader-assets-littlefs.bin` is **not a complete firmware image**. It is safe to omit if you are only updating the application. Rebuild it from `firmware_source/data/` with `pio run -t buildfs` when changing the built-in EPUBs. A full flash at `0x0000` can erase books and settings; back up first. The prebuilt 1.0.0 image was compiled successfully but has not been verified on physical hardware.
+To update the app **and** built-in EPUBs while preserving books and settings, flash the app and assets as two separate files at `0x10000` and `0x910000`. Do not concatenate them into a flat image: the `bookStorage` partition occupies `0x610000–0x910000`, and a padded combined image would overwrite it. The app-only image may be used by itself if the built-in EPUBs do not need updating.
 
-The legacy `diptyx_firmware_1.0.1*` and `diptyx_firmware_1.0.2*` files in `firmware_release/` are retained from the original project for reference. They are byte-for-byte identical to the upstream files and do **not** contain the Modern Reader fork.
+A full flash at `0x0000` can erase books and settings; back up first. The prebuilt 1.0.1 images compiled successfully but have not been verified on physical hardware.
 
 ## Repository layout
 
 ```text
 firmware_source/       Modern Reader source, build configuration, manual, and change log
-firmware_release/      Modern Reader 1.0.0 clean-install image, assets image, and inherited upstream files
 docs/images/           Source-derived UI preview mockups
 README.md              Project overview and usage notes
 LICENSE                MIT license
 ```
+
+Compiled firmware and checksums are published as GitHub Release assets rather than stored in the source tree.
 
 ## Forking and attribution
 

@@ -1,11 +1,18 @@
 # Modern Reader
 
 Modern Reader is a fork of the firmware of the [Diptyx E-reader](https://github.com/MartijndenHoed/Diptyx) by Martijn den Hoed and the Diptyx team,
-based on Diptyx firmware 1.0.2. See `CHANGELOG.md` for what changed, `NOTICE.md` for credits and `LICENSE` for the MIT license.
+based on Diptyx firmware 1.0.2. See `CHANGELOG.md` for the complete version-by-version history, `NOTICE.md` for credits and `LICENSE` for the MIT license.
 It is not affiliated with or endorsed by Diptyx.
 
-Build: `pio run` (PlatformIO, ESP-IDF). Flash `.pio/build/esp32-s3-devkitm-1/firmware.bin` at address `0x10000` to keep your settings.
-The manual and firmware info screens are the EPUB files in `data/` (they live in the assets partition). To update them run `pio run -t buildfs` and flash `.pio/build/esp32-s3-devkitm-1/littlefs.bin` at address `0x910000` (books and settings are not touched).
+Build with PlatformIO and ESP-IDF. When updating the change log, append a new version to `CHANGELOG.md` (keep earlier entries), then regenerate the built-in Firmware info EPUB from that full history:
+
+```sh
+python scripts/build_firmware_info_epub.py
+pio run -t buildfs
+pio run
+```
+
+For a data-preserving firmware update, flash `.pio/build/esp32-s3-devkitm-1/firmware.bin` at `0x10000`. To update the built-in Manual and Firmware info EPUBs too, separately flash `.pio/build/esp32-s3-devkitm-1/littlefs.bin` at `0x910000`. Do not combine these into one flat binary: the book-storage partition lies between the two address ranges.
 
 ---
 

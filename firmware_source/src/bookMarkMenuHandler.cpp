@@ -170,14 +170,14 @@ void BookMarkMenuHandler::drawMenu()
 
 
 // ---------------------------------------------------------------------------------------------
-// Full screen chapter list. Plain text rows over both screens (left column first, then right).
+// Full screen chapter list. Compact rows span both screens, with a shared header style.
 // ---------------------------------------------------------------------------------------------
 #define CL_LINE_H 20          // height of one text line
 #define CL_ROW_PAD 4          // padding of a row
-#define CL_MARGIN 10
-#define CL_LEFT_TOP 598       // top of the first row on the left screen (below the title)
-#define CL_RIGHT_TOP 636      // top of the first row on the right screen
-#define CL_BOTTOM 36          // rows stop here (hint line below)
+#define CL_MARGIN 14
+#define CL_LEFT_TOP 548       // first row below the two-level header
+#define CL_RIGHT_TOP 548      // match the left page; the right header says "continued"
+#define CL_BOTTOM 52          // rows stop above the footer hint
 #define CL_TEXT_X (CL_MARGIN + 16)
 #define CL_MAX_LINES 2
 
@@ -354,32 +354,54 @@ void BookMarkMenuHandler::drawChapterList(bool fullRefresh)
             const bool selected = (i == chapterSel);
             const int lineCount = chapterLines[i];
             const int h = lineCount * CL_LINE_H + CL_ROW_PAD;
-            if (selected) renderer->drawSquare(CL_MARGIN - 4, rowTop - h, PW - 2 * CL_MARGIN + 8, h, false);
+            const int rowX = CL_MARGIN - 4;
+            const int rowW = PW - 2 * rowX;
+            const int rowY = rowTop - h;
+            if (selected) {
+                renderer->fillRounded(rowX, rowY, rowW, h, 6, true);
+            } else {
+                // Light dividers make long tables easier to scan without making every
+                // entry a full card (important for books with hundreds of chapters).
+                renderer->fillDither(CL_TEXT_X, rowY, PW - CL_TEXT_X - CL_MARGIN, 1, true);
+            }
             std::vector<std::string> lines = renderer->wrapText(chapterEntries[i].title, textWidth, false, 1, CL_MAX_LINES);
             for (int k = 0; k < (int)lines.size() && k < lineCount; k++)
             {
                 renderer->drawString(CL_TEXT_X, rowTop - CL_LINE_H - k * CL_LINE_H, lines[k], 1, false, false, !selected);
             }
-            if (i == openedAt) renderer->drawSquare(CL_MARGIN, rowTop - h / 2 - 3, 6, 6, selected); // "you are here" marker
+            if (i == openedAt) renderer->fillRounded(CL_MARGIN, rowTop - h / 2 - 3, 6, 6, 1, !selected); // "you are here" marker
             rowTop -= h;
         }
     };
 
-    // left screen: title, list, hint line
+    // Left screen: section label, title, selected position, then the first column.
     renderer->framebuffer = leftPageFrameBuffer;
     renderer->clearScreenBuffer();
-    renderer->drawString(CL_MARGIN, 614, "Chapter List", 1, true, false, true);
+    renderer->drawString(CL_MARGIN + 4, 626, "CONTENTS", 1, false, false, true);
+    renderer->drawString(CL_MARGIN + 4, 586, "Chapters", 2, true, false, true);
     std::string position = std::to_string(chapterSel + 1) + " / " + std::to_string(total);
-    renderer->drawString(PW - CL_MARGIN - renderer->measureText(position, true), 614, position, 1, true, false, true);
-    renderer->drawSquare(CL_MARGIN, 606, PW - 2 * CL_MARGIN, 2, false);
+    const int positionW = renderer->measureText(position, true) + 20;
+    const int positionX = PW - CL_MARGIN - positionW;
+    renderer->drawPill(positionX, 590, positionW, 28, false);
+    renderer->drawString(positionX + 10, 597, position, 1, true, false, true);
+    renderer->drawSquare(CL_MARGIN, 575, PW - 2 * CL_MARGIN, 2, false);
+    renderer->drawSquare(CL_MARGIN, 572, 72, 6, false);
     drawColumn(leftPageFrameBuffer, chapterTop, leftCount, CL_LEFT_TOP);
     renderer->framebuffer = leftPageFrameBuffer;
-    renderer->drawString(CL_MARGIN, 10, "Middle: open   Left: back   Double-tap: page", 1, false, false, true);
+    renderer->drawPill(CL_MARGIN, 12, 224, 28, false);
+    renderer->drawString(CL_MARGIN + 12, 19, "Middle: open   Left: back", 1, true, false, true);
 
-    // right screen: the list continues
+    // Right screen: repeat the header so the continuation reads as one designed spread.
     renderer->framebuffer = rightPageFrameBuffer;
     renderer->clearScreenBuffer();
+    renderer->drawString(CL_MARGIN + 4, 626, "CONTENTS · CONTINUED", 1, false, false, true);
+    renderer->drawString(CL_MARGIN + 4, 586, "Chapters", 2, true, false, true);
+    renderer->drawSquare(CL_MARGIN, 575, PW - 2 * CL_MARGIN, 2, false);
+    renderer->drawSquare(CL_MARGIN, 572, 72, 6, false);
     drawColumn(rightPageFrameBuffer, chapterTop + leftCount, rightCount, CL_RIGHT_TOP);
+    renderer->framebuffer = rightPageFrameBuffer;
+    renderer->drawPill(CL_MARGIN, 12, 250, 28, false);
+    renderer->drawString(CL_MARGIN + 12, 19, "Double-tap Up / Down: page", 1, true, false, true);
 
     if (fullRefresh) renderer->epd.forceRefresh();
     else renderer->epd.partialUpdatesRemaining[true] = 8;
