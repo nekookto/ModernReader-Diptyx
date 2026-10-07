@@ -46,6 +46,22 @@ public:
     void drawImage(Image image, int x, int y);
     void drawBookMark(unsigned char* framebuffer,bool value);
     void drawProgressBar(int y,int length,int percent);
+    // ---- menu UI primitives (see uiDraw.cpp); "ink" = true draws black, false draws white ----
+    void fillRounded(int x, int y, int w, int h, int radius, bool ink);
+    void drawCard(int x, int y, int w, int h, bool selected);
+    void fillRoundedDither(int x, int y, int w, int h, int radius, bool ink); // 50% checkerboard "grey"
+    void fillDither(int x, int y, int w, int h, bool ink);
+    void fillDisc(int cx, int cy, int radius, bool ink);
+    void drawIcon(int icon, int x, int y, bool ink); // 28x28 icon, (x,y) = bottom left corner
+    void drawPill(int x, int y, int w, int h, bool filled);
+    // 1-bit bitmap (rows top to bottom, MSB first, 1 = ink); (x, y) is the bottom-left corner. ink=true draws black
+    void drawBitmap1bpp(int x, int y, int w, int h, const uint8_t *bits, bool ink);
+    void drawChevron(int x, int y, bool ink);
+    void drawMeter(int x, int y, int w, int h, int percent, bool ink);
+    void drawScrollbar(int x, int top, int bottom, int index, int count, int perPage);
+    std::vector<std::string> wrapText(const std::string &text, int maxWidth, bool bold, int scale, int maxLines);
+    int measureText(const std::string &text, bool bold);
+    std::string fitText(const std::string &text, int maxWidth, bool bold);
     void clearScreenBuffer(void);
     void clearScreenBuffer(unsigned char* framebuffer);
     void drawScreenPartial(bool screenID,int partialMinX,int partialMinY,int partialMaxX,int partialMaxY);

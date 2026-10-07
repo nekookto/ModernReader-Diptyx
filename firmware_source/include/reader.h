@@ -52,6 +52,9 @@ public:
     void nextPage(void);
     void prevPage(void);
     void openPage(void);
+    void openMiniMenu();   // middle / up button while reading
+    void exitToLibrary();  // close the book and go back to the library menu
+    uint32_t middleEdgesSeen = 0; // ignores a middle button that is just being held down
     void middleButtonAction();
     void rightButtonAction();
     void leftButtonAction();

@@ -69,47 +69,114 @@ enum {
 
 static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 
-static bool is_print[CFG_TUH_DEVICE_MAX+1] = { 0 };
+static bool               is_printable[CFG_TUH_DEVICE_MAX + 1] = {0};
 static tusb_desc_device_t descriptor_device[CFG_TUH_DEVICE_MAX+1];
 
 static void print_utf16(uint16_t *temp_buf, size_t buf_len);
 static void print_device_info(uint8_t daddr, const tusb_desc_device_t* desc_device);
 
-void led_blinking_task(void);
-void cdc_task(void);
+static void led_blinking_task(void);
+static void cdc_task(void);
 
-/*------------- MAIN -------------*/
-int main(void) {
-  board_init();
+#if CFG_TUSB_OS == OPT_OS_FREERTOS
+static void freertos_init(void);
+#endif
 
-  printf("TinyUSB Host Information -> Device CDC Example\r\n");
+#define cdc_printf(...)                                           \
+  do {                                                            \
+    char _tempbuf[256];                                           \
+    char* _bufptr = _tempbuf;                                     \
+    uint32_t count = (uint32_t) sprintf(_tempbuf, __VA_ARGS__);   \
+    while (count > 0) {                                           \
+        uint32_t wr_count = tud_cdc_write(_bufptr, count);        \
+        count -= wr_count;                                        \
+        _bufptr += wr_count;                                      \
+        if (count > 0){                                           \
+          tud_task();                                             \
+          tud_cdc_write_flush();                                  \
+        }                                                         \
+    }                                                             \
+  } while(0)
 
+
+static void usb_device_init(void) {
   // init device and host stack on configured roothub port
   tusb_rhport_init_t dev_init = {
     .role = TUSB_ROLE_DEVICE,
     .speed = TUSB_SPEED_AUTO
   };
   tusb_init(BOARD_TUD_RHPORT, &dev_init);
+  board_init_after_tusb();
+}
 
+static void usb_host_init(void) {
+  // init host stack on configured roothub port
   tusb_rhport_init_t host_init = {
     .role = TUSB_ROLE_HOST,
     .speed = TUSB_SPEED_AUTO
   };
   tusb_init(BOARD_TUH_RHPORT, &host_init);
+  board_init_after_tusb();
+}
 
-  if (board_init_after_tusb) {
-    board_init_after_tusb();
-  }
+//--------------------------------------------------------------------+
+// Main
+//--------------------------------------------------------------------+
+static void main_task(void* param) {
+  (void) param;
 
   while (1) {
-    tud_task(); // tinyusb device task
-    tuh_task(); // tinyusb host task
     cdc_task();
     led_blinking_task();
+
+    // preempted RTOS run device/host stack in its own task
+#if CFG_TUSB_OS_HAS_SCHEDULER == 0
+    tud_task(); // tinyusb device task
+    tuh_task(); // tinyusb host task
+#endif
   }
+}
+
+int main(void) {
+  board_init();
+
+#if CFG_TUSB_OS_HAS_SCHEDULER == 0
+  printf("TinyUSB Host Information -> Device CDC Example\r\n");
+
+  usb_device_init();
+  usb_host_init();
+
+  main_task(NULL);
+#elif CFG_TUSB_OS == OPT_OS_FREERTOS
+  freertos_init(); // create RTOS tasks for device, host stack and main_task()
+#else
+  #error RTOS not supported
+#endif
 
   return 0;
 }
+
+#if CFG_TUSB_OS_HAS_SCHEDULER
+// USB Device Driver task for RTOS
+static void usb_device_task(void *param) {
+  (void) param;
+  usb_device_init();
+  while (1) {
+    // put this thread to waiting state until there is new events
+    tud_task();
+  }
+}
+
+static void usb_host_task(void *param) {
+  (void) param;
+  usb_host_init();
+  while (1) {
+    // put this thread to waiting state until there is new events
+    tuh_task();
+  }
+}
+#endif
+
 
 //--------------------------------------------------------------------+
 // Device CDC
@@ -139,17 +206,23 @@ void tud_resume_cb(void) {
 }
 
 void cdc_task(void) {
+  static uint32_t connected_ms = 0;
+
   if (!tud_cdc_connected()) {
-    // delay a bit otherwise we can outpace host's terminal. Linux will set LineState (DTR) then Line Coding.
-    // If we send data before Linux's terminal set Line Coding, it can be ignored --> missing data with hardware test loop
-    board_delay(20);
+    connected_ms = tusb_time_millis_api();
     return;
+  }
+
+  // delay a bit otherwise we can outpace host's terminal. Linux will set LineState (DTR) then Line Coding.
+  // If we send data before Linux's terminal set Line Coding, it can be ignored --> missing data with hardware test loop
+  if (tusb_time_millis_api() - connected_ms < 100) {
+    return; // wait for stable connection
   }
 
   for (uint8_t daddr = 1; daddr <= CFG_TUH_DEVICE_MAX; daddr++) {
     if (tuh_mounted(daddr)) {
-      if (is_print[daddr]) {
-        is_print[daddr] = false;
+      if (is_printable[daddr]) {
+        is_printable[daddr] = false;
         print_device_info(daddr, &descriptor_device[daddr]);
         tud_cdc_write_flush();
       }
@@ -160,22 +233,6 @@ void cdc_task(void) {
 //--------------------------------------------------------------------+
 // Host Get device information
 //--------------------------------------------------------------------+
-#define cdc_printf(...)                          \
-  do {                                           \
-    char _tempbuf[256];                          \
-    char* _bufptr = _tempbuf;                        \
-    uint32_t count = (uint32_t) sprintf(_tempbuf, __VA_ARGS__);  \
-    while (count > 0) { \
-        uint32_t wr_count = tud_cdc_write(_bufptr, count); \
-        count -= wr_count; \
-        _bufptr += wr_count; \
-        if (count > 0){ \
-          tud_task();\
-          tud_cdc_write_flush(); \
-        } \
-    } \
-  } while(0)
-
 static void print_device_info(uint8_t daddr, const tusb_desc_device_t* desc_device) {
   // Get String descriptor using Sync API
   uint16_t serial[64];
@@ -185,10 +242,9 @@ static void print_device_info(uint8_t daddr, const tusb_desc_device_t* desc_devi
   cdc_printf("Device %u: ID %04x:%04x SN ", daddr, desc_device->idVendor, desc_device->idProduct);
   uint8_t xfer_result = tuh_descriptor_get_serial_string_sync(daddr, LANGUAGE_ID, serial, sizeof(serial));
   if (XFER_RESULT_SUCCESS != xfer_result) {
-    serial[0] = 'n';
-    serial[1] = '/';
-    serial[2] = 'a';
-    serial[3] = 0;
+    serial[0] = (uint16_t)((TUSB_DESC_STRING << 8) | (2 * 1 + 2));
+    serial[1] = '0';
+    serial[2] = 0;
   }
   print_utf16(serial, TU_ARRAY_SIZE(serial));
   cdc_printf("\r\n");
@@ -220,9 +276,7 @@ static void print_device_info(uint8_t daddr, const tusb_desc_device_t* desc_devi
   cdc_printf("\r\n");
 
   cdc_printf("  iSerialNumber       %u     "     , desc_device->iSerialNumber);
-  cdc_printf((char*)serial); // serial is already to UTF-8
-  cdc_printf("\r\n");
-
+  cdc_printf("%s \r\n", (char*)serial); // serial is already to UTF-8
   cdc_printf("  bNumConfigurations  %u\r\n"     , desc_device->bNumConfigurations);
 }
 
@@ -232,13 +286,15 @@ void tuh_enum_descriptor_device_cb(uint8_t daddr, tusb_desc_device_t const* desc
 }
 
 void tuh_mount_cb(uint8_t daddr) {
-  printf("mounted device %u\r\n", daddr);
-  is_print[daddr] = true;
+  cdc_printf("mounted device %u\r\n", daddr);
+  tud_cdc_write_flush();
+  is_printable[daddr] = true;
 }
 
 void tuh_umount_cb(uint8_t daddr) {
-  printf("unmounted device %u\r\n", daddr);
-  is_print[daddr] = false;
+  cdc_printf("unmounted device %u\r\n", daddr);
+  tud_cdc_write_flush();
+  is_printable[daddr] = false;
 }
 
 //--------------------------------------------------------------------+
@@ -249,7 +305,9 @@ void led_blinking_task(void) {
   static bool led_state = false;
 
   // Blink every interval ms
-  if (board_millis() - start_ms < blink_interval_ms) return; // not enough time
+  if (tusb_time_millis_api() - start_ms < blink_interval_ms) {
+    return;// not enough time
+  }
   start_ms += blink_interval_ms;
 
   board_led_write(led_state);
@@ -259,7 +317,6 @@ void led_blinking_task(void) {
 //--------------------------------------------------------------------+
 // String Descriptor Helper
 //--------------------------------------------------------------------+
-
 static void _convert_utf16le_to_utf8(const uint16_t *utf16, size_t utf16_len, uint8_t *utf8, size_t utf8_len) {
   // TODO: Check for runover.
   (void)utf8_len;
@@ -300,11 +357,63 @@ static int _count_utf8_bytes(const uint16_t *buf, size_t len) {
 }
 
 static void print_utf16(uint16_t *temp_buf, size_t buf_len) {
-  if ((temp_buf[0] & 0xff) == 0) return;  // empty
+  if ((temp_buf[0] & 0xff) == 0) {
+    return;// empty
+  }
   size_t utf16_len = ((temp_buf[0] & 0xff) - 2) / sizeof(uint16_t);
   size_t utf8_len = (size_t) _count_utf8_bytes(temp_buf + 1, utf16_len);
   _convert_utf16le_to_utf8(temp_buf + 1, utf16_len, (uint8_t *) temp_buf, sizeof(uint16_t) * buf_len);
   ((uint8_t*) temp_buf)[utf8_len] = '\0';
 
-  cdc_printf((char*) temp_buf);
+  cdc_printf("%s", (char*) temp_buf);
 }
+
+//--------------------------------------------------------------------+
+// FreeRTOS
+//--------------------------------------------------------------------+
+#if CFG_TUSB_OS == OPT_OS_FREERTOS
+
+#ifdef ESP_PLATFORM
+  #define USBD_STACK_SIZE     4096
+  #define USBH_STACK_SIZE     4096
+  void app_main(void) {
+    main();
+  }
+#else
+  // Increase stack size when debug log is enabled
+  #define USBD_STACK_SIZE    (configMINIMAL_STACK_SIZE * (CFG_TUSB_DEBUG ? 4 : 2))
+  #define USBH_STACK_SIZE    (configMINIMAL_STACK_SIZE * (CFG_TUSB_DEBUG ? 4 : 2))
+#endif
+
+#define MAIN_STACK_SIZE    (configMINIMAL_STACK_SIZE*4)
+
+// static task
+#if configSUPPORT_STATIC_ALLOCATION
+StackType_t main_stack[MAIN_STACK_SIZE];
+StaticTask_t main_taskdef;
+
+StackType_t  usb_device_stack[USBD_STACK_SIZE];
+StaticTask_t usb_device_taskdef;
+
+StackType_t  usb_host_stack[USBH_STACK_SIZE];
+StaticTask_t usb_host_taskdef;
+#endif
+
+void freertos_init(void) {
+  #if configSUPPORT_STATIC_ALLOCATION
+  xTaskCreateStatic(usb_device_task, "usbd", USBD_STACK_SIZE, NULL, configMAX_PRIORITIES-1, usb_device_stack, &usb_device_taskdef);
+  xTaskCreateStatic(usb_host_task, "usbh", USBH_STACK_SIZE, NULL, configMAX_PRIORITIES-1, usb_host_stack, &usb_host_taskdef);
+  xTaskCreateStatic(main_task, "main", MAIN_STACK_SIZE, NULL, configMAX_PRIORITIES - 2, main_stack, &main_taskdef);
+  #else
+  xTaskCreate(usb_device_task, "usbd", USBD_STACK_SIZE, NULL, configMAX_PRIORITIES - 1, NULL);
+  xTaskCreate(usb_host_task, "usbh", USBH_STACK_SIZE, NULL, configMAX_PRIORITIES - 1, NULL);
+  xTaskCreate(main_task, "main", MAIN_STACK_SIZE, NULL, configMAX_PRIORITIES - 2, NULL);
+  #endif
+
+  // only start scheduler for non-espressif mcu
+  #ifndef ESP_PLATFORM
+  vTaskStartScheduler();
+  #endif
+}
+
+#endif

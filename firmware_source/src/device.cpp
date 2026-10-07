@@ -72,6 +72,7 @@ void Device::saveSettings() {
     cJSON_AddNumberToObject(device, "smartImageDetect", deviceSettings.smartImageDetect);
     cJSON_AddNumberToObject(device, "standbyShutdown", deviceSettings.standbyShutdown);
     cJSON_AddNumberToObject(device, "sunlightFullRefresh", deviceSettings.sunlightFullRefresh);
+    cJSON_AddNumberToObject(device, "libraryGrouping", deviceSettings.libraryGrouping);
     cJSON_AddNumberToObject(device, "vcomLeft", deviceSettings.vcomLeft);
     cJSON_AddNumberToObject(device, "vcomRight", deviceSettings.vcomRight);
     cJSON_AddItemToObject(root, "deviceSettings", device);
@@ -179,6 +180,8 @@ void Device::loadSettings() {
                     deviceSettings.standbyShutdown = j->valueint;
                 if ((j = cJSON_GetObjectItem(device, "sunlightFullRefresh")) && cJSON_IsNumber(j))
                     deviceSettings.sunlightFullRefresh = j->valueint;
+                if ((j = cJSON_GetObjectItem(device, "libraryGrouping")) && cJSON_IsNumber(j))
+                    deviceSettings.libraryGrouping = j->valueint;
                 if ((j = cJSON_GetObjectItem(device, "vcomLeft")) && cJSON_IsNumber(j))
                     deviceSettings.vcomLeft = j->valueint;
                 if ((j = cJSON_GetObjectItem(device, "vcomRight")) && cJSON_IsNumber(j))
@@ -319,6 +322,11 @@ void Device::pollButtons()
         bool buttonPress = false;
         if(!gpio_get_level(button_pins[i]) && !buttonStates[button_pins[i]]) buttonPress=true;
         buttonStates[button_pins[i]] = !gpio_get_level(button_pins[i]);
+        if(buttonPress)
+        {
+            buttonEdgeMs[button_pins[i]] = (uint32_t)(esp_timer_get_time() / 1000);
+            buttonEdgeCount[button_pins[i]] = buttonEdgeCount[button_pins[i]] + 1;
+        }
         if(buttonPress && int(esp_timer_get_time())>this->latchTimeOut)
         {
             //if(buttonLatchedStates[button_pins[i]]==false) buzz();
@@ -335,6 +343,28 @@ void Device::pollButtons()
     }
 }
 
+
+Device::TapKind Device::classifyTap(gpio_num_t button, DoubleTapTracker &t, int dir)
+{
+    uint32_t edges = buttonEdgeCount[button];
+    if (edges == t.seenEdges) { t.armed = false; return TapKind::Hold; } // no new press: button is being held
+    t.seenEdges = edges;
+    uint32_t edgeMs = buttonEdgeMs[button];
+    if (t.armed && t.dir == dir && (uint32_t)(edgeMs - t.anchorMs) <= DOUBLE_TAP_MS) {
+        t.armed = false;
+        return TapKind::Double;
+    }
+    t.armed = true;
+    t.dir = dir;
+    t.anchorMs = edgeMs;
+    return TapKind::Single;
+}
+
+bool Device::tapPending(gpio_num_t button, const DoubleTapTracker &t) const
+{
+    return t.armed && buttonEdgeCount[button] != t.seenEdges &&
+           (uint32_t)(buttonEdgeMs[button] - t.anchorMs) <= DOUBLE_TAP_MS;
+}
 
 void Device::setLatchTimeOut(int duration)
 {

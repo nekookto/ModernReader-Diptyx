@@ -217,6 +217,19 @@ void Image::prepare()
             return;
         }
 
+        // progressive JPEGs (very common in commercial EPUBs) are not supported by TJpgDec: handled separately
+        {
+            ProgressiveJpegInfo pinfo;
+            if (pjpeg_get_info(reinterpret_cast<const uint8_t*>(data), size, &pinfo) && pinfo.progressive) {
+                free(data);
+                imageWidth  = pinfo.width;
+                imageHeight = pinfo.height;
+                progressiveJpeg = true;
+                ESP_LOGI(TAG, "Progressive JPEG dimensions: %dx%d", imageWidth, imageHeight);
+                return;
+            }
+        }
+
         JpegContext ctx {
             { reinterpret_cast<const uint8_t*>(data), size, 0 },
             { nullptr, 0, 0 }
@@ -332,6 +345,35 @@ void Image::decodeJPEGAndScale(int targetW, int targetH)
             ESP_LOGE(TAG, "JPEG read from zip failed");
             return;
         }
+    }
+
+    // ---------- Progressive JPEG ----------
+    if (progressiveJpeg) {
+        const int scaleN = pjpeg_pick_scale(imageWidth, imageHeight, targetW, targetH);
+        // limit the working memory to a share of what is free in external RAM
+        size_t freeRam = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+        size_t budget = freeRam > 1500000 ? (freeRam - 1000000) : 500000;
+        if (budget > 4000000) budget = 4000000;
+
+        uint8_t* gray = nullptr;
+        int gw = 0, gh = 0;
+        bool ok = pjpeg_decode_gray(reinterpret_cast<const uint8_t*>(data), size, scaleN, budget, &gray, &gw, &gh);
+        free(data);
+        if (!ok || !gray || gw <= 0 || gh <= 0) {
+            ESP_LOGE(TAG, "Progressive JPEG decode failed");
+            if (gray) free(gray);
+            return;
+        }
+        imageWidth  = gw;
+        imageHeight = gh;
+        imageData.assign(gray, gray + (size_t)gw * gh);
+        free(gray);
+
+        if (imageWidth != targetW || imageHeight != targetH) {
+            scaleImage(targetW, targetH);
+        }
+        ESP_LOGI(TAG, "Progressive JPEG decoded %dx%d (scale=%d/8)", imageWidth, imageHeight, scaleN);
+        return;
     }
 
     std::vector<uint8_t> decodeBuffer;

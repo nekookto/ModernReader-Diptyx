@@ -12,12 +12,13 @@ CFLAGS += \
 # SAM driver is flooded with -Wcast-qual which slow down complication significantly
 CFLAGS_SKIP += -Wcast-qual
 
-LDFLAGS_GCC += \
+LDFLAGS += \
   -nostdlib -nostartfiles \
   --specs=nosys.specs --specs=nano.specs
 
 SRC_C += \
 	src/portable/microchip/samd/dcd_samd.c \
+	src/portable/microchip/samd/hcd_samd.c \
 	${SDK_DIR}/gcc/gcc/startup_${SAM_FAMILY}.c \
 	${SDK_DIR}/gcc/system_${SAM_FAMILY}.c \
 	${SDK_DIR}/hpl/gclk/hpl_gclk.c \

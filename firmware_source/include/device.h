@@ -1,6 +1,7 @@
 // Device stores global information and variables
 #pragma once
 #include <string>
+#include "doubleTap.h"
 #include "reader.h"
 #include "simpleReader.h"
 #include "bookHandler.h"
@@ -20,6 +21,7 @@
 
 extern gpio_num_t button_pins[];
 #define NUM_BUTTONS 7
+
 
 class Device {
 public:
@@ -50,6 +52,7 @@ public:
         int sunlightFullRefresh = 0;
         int vcomLeft = 23;
         int vcomRight = 23;
+        int libraryGrouping = 1; // 0 = by author, 1 = by series / title (default), 2 = by folder
     };
 
     // Access the singleton instance
@@ -132,6 +135,15 @@ public:
     void setLatchTimeOut(int duration);
     void pollButtons();
     volatile int latchTimeOut = 0;
+
+    // raw press edges (recorded even while the latch debounce window is active), index = gpio number
+    volatile uint32_t buttonEdgeCount[7] = {0};
+    volatile uint32_t buttonEdgeMs[7] = {0};
+    enum class TapKind { Hold, Single, Double };
+    // Classify the press that triggered an up/down action. Hold = auto-repeat of a held button.
+    TapKind classifyTap(gpio_num_t button, DoubleTapTracker &tracker, int dir);
+    // true when a second quick press happened that was swallowed by the latch debounce window
+    bool tapPending(gpio_num_t button, const DoubleTapTracker &tracker) const;
     //void pollButtonsLatching();
 
     int rightButtonState = 1;

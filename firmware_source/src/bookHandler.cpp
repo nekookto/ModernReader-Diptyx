@@ -8,6 +8,7 @@
 #include <map>
 #include <unordered_map>
 #include <algorithm>
+#include <cctype>
 #include "device.h"
 #include "esp_log.h"
 static const char *TAG = "Bookhandler";
@@ -57,6 +58,19 @@ static bool ends_with(const char *str, const char *suffix) {
     size_t l2 = strlen(suffix);
     if (l2 > l1) return false;
     return strcmp(str + l1 - l2, suffix) == 0;
+}
+
+// the file name of an epub without its folders
+static std::string baseName(const std::string &path) {
+    size_t slash = path.find_last_of('/');
+    return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
+// book paths can contain folders; the metadata file lives in a flat folder, so the slashes are replaced
+static std::string metaFileName(const std::string &bookPath) {
+    std::string name = bookPath;
+    for (auto &c : name) if (c == '/') c = '~';
+    return name + ".json";
 }
 
 // ensure the /bookStorage/books directory exists
@@ -163,6 +177,9 @@ std::string Book::toJSON() const {
     cJSON_AddStringToObject(root, "path", path.c_str());
     cJSON_AddStringToObject(root, "title", title.c_str());
     cJSON_AddStringToObject(root, "author", author.c_str());
+    cJSON_AddStringToObject(root, "series", series.c_str());
+    cJSON_AddNumberToObject(root, "seriesIndex", seriesIndex);
+    cJSON_AddNumberToObject(root, "seriesChecked", seriesChecked);
     cJSON_AddNumberToObject(root, "totalPageCount", totalPageCount);
     cJSON_AddNumberToObject(root, "chapterCount", chapterCount);
     cJSON_AddNumberToObject(root, "currentPageChapterIndex", currentPageChapterIndex);
@@ -170,6 +187,7 @@ std::string Book::toJSON() const {
     cJSON_AddNumberToObject(root, "currentPage", currentPage);
     cJSON_AddNumberToObject(root, "badParse", badParse);
     cJSON_AddNumberToObject(root, "favorite", favorite);
+    cJSON_AddNumberToObject(root, "lastOpened", (double)lastOpened);
 
     // chapters
     cJSON *chapters = cJSON_CreateArray();
@@ -245,8 +263,16 @@ Book *Book::fromJSON(const std::string &json) {
     cJSON *jrender = cJSON_GetObjectItem(root, "renderSettings");
     cJSON *jbadParse = cJSON_GetObjectItem(root, "badParse");
     cJSON *jfavorite = cJSON_GetObjectItem(root, "favorite");
+    cJSON *jlastOpened = cJSON_GetObjectItem(root, "lastOpened");
     cJSON *jbookMarks = cJSON_GetObjectItem(root, "bookMarks");
     cJSON *jcachedImages = cJSON_GetObjectItem(root, "cachedImages");
+
+    cJSON *jseries = cJSON_GetObjectItem(root, "series");
+    cJSON *jseriesIndex = cJSON_GetObjectItem(root, "seriesIndex");
+    cJSON *jseriesChecked = cJSON_GetObjectItem(root, "seriesChecked");
+    if (cJSON_IsString(jseries)) book->series = jseries->valuestring;
+    book->seriesIndex = cJSON_IsNumber(jseriesIndex) ? (float)jseriesIndex->valuedouble : 0;
+    book->seriesChecked = cJSON_IsNumber(jseriesChecked) ? jseriesChecked->valueint : false; // old files: not scanned yet
 
     book->currentPageChapterIndex = cJSON_IsNumber(jreadChapter) ? jreadChapter->valueint : 0;
     book->currentPageElementIndex = cJSON_IsNumber(jreadElement) ? jreadElement->valueint : 0;
@@ -254,6 +280,7 @@ Book *Book::fromJSON(const std::string &json) {
     book->currentPage = cJSON_IsNumber(jread) ? jread->valueint : 0;
     book->badParse = cJSON_IsNumber(jbadParse) ? jbadParse->valueint : false;
     book->favorite = cJSON_IsNumber(jfavorite) ? jfavorite->valueint : false;
+    book->lastOpened = cJSON_IsNumber(jlastOpened) ? (uint32_t)jlastOpened->valuedouble : 0; // old files: never opened
 
     // chapterPageCounts
     if (jchapterPages && cJSON_IsArray(jchapterPages)) {
@@ -454,7 +481,7 @@ void BookHandler::saveBook(Book *book)
         }
     }
 
-    std::string filename = std::string(basePath) + "/" + book->path + ".json";
+    std::string filename = std::string(basePath) + "/" + metaFileName(book->path);
     std::string jsonStr = book->toJSON();
 
     FILE *f = fopen(filename.c_str(), "w");
@@ -485,7 +512,7 @@ void BookHandler::deleteBook(const std::string &bookPath)
     bool deleteFromSD = Device::getInstance().deviceSettings.storeDataOnSD;
     const char *basePath = deleteFromSD ? "/sdcard/book_data" : "/littlefs/books";
 
-    std::string filename = std::string(basePath) + "/" + bookPath + ".json";
+    std::string filename = std::string(basePath) + "/" + metaFileName(bookPath);
 
     if (remove(filename.c_str()) != 0) {
         ESP_LOGW(TAG, "Failed to delete book file: %s", filename.c_str());
@@ -621,16 +648,59 @@ void BookHandler::transferDataToFlash()
 }
 
 
+// Collect all epubs below relDir (relative to /sdcard), recursively up to maxDepth sub folders deep
+static void scanEpubs(const std::string &relDir, int depth, int maxDepth, std::vector<std::string> &out)
+{
+    std::string fullDir = relDir.empty() ? std::string("/sdcard") : std::string("/sdcard/") + relDir;
+    DIR *d = opendir(fullDir.c_str());
+    if (!d) return;
+    struct dirent *entry;
+    while ((entry = readdir(d)) != NULL) {
+        if (entry->d_name[0] == '.') continue; // hidden files and folders
+        std::string rel = relDir.empty() ? std::string(entry->d_name) : relDir + "/" + entry->d_name;
+        if (entry->d_type == DT_DIR) {
+            if (depth < maxDepth) scanEpubs(rel, depth + 1, maxDepth, out);
+            continue;
+        }
+        if (ends_with_epub(entry->d_name)) out.push_back(rel);
+    }
+    closedir(d);
+}
+
+// Finds the epubs on the sd card: the ones in the root folder, and everything inside the "Books" folder
+static std::vector<std::string> findEpubFiles()
+{
+    std::vector<std::string> found;
+    DIR *root = opendir("/sdcard");
+    if (!root) {
+        ESP_LOGE(TAG, "Failed to open directory: /sdcard");
+        return found;
+    }
+    std::vector<std::string> bookFolders;
+    struct dirent *entry;
+    while ((entry = readdir(root)) != NULL) {
+        if (entry->d_name[0] == '.') continue;
+        if (entry->d_type == DT_DIR) {
+            if (strcasecmp(entry->d_name, "Books") == 0) bookFolders.push_back(entry->d_name);
+        } else if (ends_with_epub(entry->d_name)) {
+            found.push_back(entry->d_name);
+        }
+    }
+    closedir(root);
+    for (const std::string &folder : bookFolders) scanEpubs(folder, 0, 5, found);
+    return found;
+}
+
 void BookHandler::listBooks(void)
 {
-    if(authorList.empty()) authorList.emplace_back("Favorite books");
     const char *sdPath = "/sdcard";
 
-    DIR *dir = opendir(sdPath);
-    if (!dir) {
+    DIR *sdCheck = opendir(sdPath);
+    if (!sdCheck) {
         ESP_LOGE(TAG, "Failed to open directory: %s", sdPath);
         return;
     }
+    closedir(sdCheck);
 
     Device &dev = Device::getInstance();
     if (dev.activeBookPath.empty()) dev.activeBookIndex = 0;
@@ -648,11 +718,7 @@ void BookHandler::listBooks(void)
 
     // Step 2: Scan /sdcard and process each EPUB
     std::vector<std::string> foundPaths;
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_type == DT_DIR) continue;
-        if (!ends_with_epub(entry->d_name)) continue;
-        std::string fileName(entry->d_name);
+    for (const std::string &fileName : findEpubFiles()) {
         foundPaths.push_back(fileName);
 
         Book *book = nullptr;
@@ -667,9 +733,9 @@ void BookHandler::listBooks(void)
             std::string fullPath = std::string(sdPath) + "/" + fileName;
             if (rtc_isCurrentlyParsing(fileName)) { //if the book is malformed and somehow crashes the loader, this is triggered
                 //notify the user about the error, and store the epub as malformed
-                dev.notificationHandler->drawErrorNotification(fileName);
+                dev.notificationHandler->drawErrorNotification(baseName(fileName));
                 book = new Book(fileName,
-                                    fileName,
+                                    baseName(fileName),
                                     std::string("error during parsing"),
                                     0,
                                     0,
@@ -703,6 +769,9 @@ void BookHandler::listBooks(void)
                                     0,
                                     std::vector<int> {},
                                     currentRS);
+                    book->series = epub->get_series();
+                    book->seriesIndex = epub->get_series_index();
+                    book->seriesChecked = true;
                     book->renderSettings.fontSize=-1; //change this to some bad value so it is forced to re-index on opening
                     //reader.init(book, nullptr);
                     //reader.indexPages(); //don't init here actually, it is done upon first opening
@@ -715,9 +784,9 @@ void BookHandler::listBooks(void)
                 else
                 {
                     //if the epub loading is unsuccessful, we also store the epub as malformed and inform the user
-                    dev.notificationHandler->drawErrorNotification(fileName);
+                    dev.notificationHandler->drawErrorNotification(baseName(fileName));
                     book = new Book(fileName,
-                                        fileName,
+                                        baseName(fileName),
                                         std::string("error during parsing"),
                                         0,
                                         0,
@@ -737,7 +806,6 @@ void BookHandler::listBooks(void)
 
         if (dev.activeBookPath.empty()) dev.activeBookPath = fileName;
     }
-    closedir(dir);
     // Step 3: Prune metadata for missing books (not found in /sdcard)
 const char *basePath =
     Device::getInstance().deviceSettings.storeDataOnSD
@@ -749,7 +817,7 @@ for (auto it = indexedBooks.begin(); it != indexedBooks.end();) {
 
         if (it->second->badParse) {
             std::string metaFile =
-                std::string(basePath) + "/" + it->first + ".json";
+                std::string(basePath) + "/" + metaFileName(it->first);
 
             if (unlink(metaFile.c_str()) == 0) {
                 ESP_LOGI(TAG, "Pruned stale bad-parse metadata: %s", metaFile.c_str());
@@ -765,12 +833,253 @@ for (auto it = indexedBooks.begin(); it != indexedBooks.end();) {
     }
 }
 
-    // Step 4: Sort books into authorList
+    // Step 4: make sure the series info is available (only needed when grouping by title/series)
+    loadMissingSeriesInfo();
+
+    // Step 5: Sort books into authorList (by author or by title/series, depending on the setting)
+    groupBooks();
+}
+
+// ---- library grouping helpers ----
+
+static std::string lowerCopy(const std::string &in) {
+    std::string out = in;
+    for (auto &c : out) c = (char)tolower((unsigned char)c);
+    return out;
+}
+
+// lowercase title without a leading "the " / "a " / "an ", used for sorting and for the letter groups
+static std::string titleSortKey(const std::string &title) {
+    std::string t = lowerCopy(title);
+    size_t start = 0;
+    while (start < t.size() && isspace((unsigned char)t[start])) start++;
+    t = t.substr(start);
+    for (const char *article : {"the ", "a ", "an "}) {
+        size_t len = strlen(article);
+        if (t.compare(0, len, article) == 0 && t.size() > len) {
+            t = t.substr(len);
+            break;
+        }
+    }
+    return t;
+}
+
+// "Natural" comparison: numbers inside the text are compared by value, so "Vol 2" comes before "Vol 10"
+static int naturalCompare(const std::string &a, const std::string &b) {
+    size_t i = 0, j = 0;
+    while (i < a.size() && j < b.size()) {
+        if (isdigit((unsigned char)a[i]) && isdigit((unsigned char)b[j])) {
+            size_t si = i, sj = j;
+            while (si < a.size() && a[si] == '0') si++; // skip leading zeros
+            while (sj < b.size() && b[sj] == '0') sj++;
+            size_t ei = si, ej = sj;
+            while (ei < a.size() && isdigit((unsigned char)a[ei])) ei++;
+            while (ej < b.size() && isdigit((unsigned char)b[ej])) ej++;
+            if (ei - si != ej - sj) return (ei - si) < (ej - sj) ? -1 : 1; // fewer digits = smaller number
+            int c = a.compare(si, ei - si, b, sj, ej - sj);
+            if (c != 0) return c < 0 ? -1 : 1;
+            i = ei;
+            j = ej;
+        } else {
+            if (a[i] != b[j]) return (unsigned char)a[i] < (unsigned char)b[j] ? -1 : 1;
+            i++;
+            j++;
+        }
+    }
+    if (i < a.size()) return 1;
+    if (j < b.size()) return -1;
+    return 0;
+}
+
+// Looks for a volume number in a title or file name: "Vol. 3", "Book 2", "#4", "v05", or a number at the very end.
+// Returns 0 when there is none.
+static float volumeFromText(const std::string &text) {
+    std::string s = lowerCopy(text);
+    if (s.size() > 5 && s.compare(s.size() - 5, 5, ".epub") == 0) s.resize(s.size() - 5);
+    static const char *keywords[] = {"vol", "volume", "v", "book", "bk", "part", "pt", "no", "issue", "episode", "ep", "tome", "band", "#"};
+    float trailing = 0;
+    size_t i = 0;
+    while (i < s.size()) {
+        if (!isdigit((unsigned char)s[i])) { i++; continue; }
+        size_t start = i;
+        while (i < s.size() && isdigit((unsigned char)s[i])) i++;
+        size_t intEnd = i;
+        if (i + 1 < s.size() && s[i] == '.' && isdigit((unsigned char)s[i + 1])) { // decimal volume, e.g. 2.5
+            i++;
+            while (i < s.size() && isdigit((unsigned char)s[i])) i++;
+        }
+        float value = (float)atof(s.substr(start, i - start).c_str());
+        // the word in front of the number
+        size_t k = start;
+        while (k > 0 && (s[k - 1] == ' ' || s[k - 1] == '.' || s[k - 1] == '_' || s[k - 1] == '-' || s[k - 1] == ':')) k--;
+        size_t wordEnd = k;
+        if (k > 0 && s[k - 1] == '#') { return value > 0 ? value : 0; }
+        while (k > 0 && isalpha((unsigned char)s[k - 1])) k--;
+        std::string word = s.substr(k, wordEnd - k);
+        for (const char *keyword : keywords) {
+            if (word == keyword) return value;
+        }
+        // a short number at the very end of the name (ignoring closing brackets / spaces) counts as a volume
+        size_t rest = i;
+        while (rest < s.size() && (s[rest] == ' ' || s[rest] == ')' || s[rest] == ']')) rest++;
+        if (rest >= s.size() && intEnd - start <= 2) trailing = value;
+    }
+    return trailing;
+}
+
+
+// Volume number from a file name: a leading number ("03 - Title.epub", "2. Title") counts too, otherwise as in volumeFromText
+static float volumeFromFileName(const std::string &name) {
+    std::string s = name;
+    size_t i = 0;
+    while (i < s.size() && (s[i] == ' ' || s[i] == '[' || s[i] == '(')) i++;
+    size_t start = i;
+    while (i < s.size() && isdigit((unsigned char)s[i])) i++;
+    size_t intEnd = i;
+    if (intEnd > start && intEnd - start <= 3) {
+        if (i + 1 < s.size() && s[i] == '.' && isdigit((unsigned char)s[i + 1])) { // 2.5
+            i++;
+            while (i < s.size() && isdigit((unsigned char)s[i])) i++;
+            return (float)atof(s.substr(start, i - start).c_str());
+        }
+        // must be followed by a separator (not a letter or more digits), e.g. "03 - ", "03_", "3. ", "03)"
+        if (i >= s.size() || s[i] == ' ' || s[i] == '-' || s[i] == '_' || s[i] == '.' || s[i] == ')' || s[i] == ']' || s[i] == ',') {
+            float v = (float)atof(s.substr(start, intEnd - start).c_str());
+            if (v > 0) return v;
+        }
+    }
+    return volumeFromText(name);
+}
+
+// Position of a book in its series / folder: from the file name first (most reliable when the metadata is
+// inconsistent), else from the book's own series number, else from the title
+static float volumeOf(const Book *b) {
+    float v = volumeFromFileName(baseName(b->path));
+    if (v > 0) return v;
+    if (b->seriesIndex > 0) return b->seriesIndex;
+    return volumeFromText(b->title);
+}
+
+// Order inside a group: by volume number when known, then by title, then by file name (all natural order)
+static bool volumeOrderLess(const Book *x, const Book *y) {
+    float vx = volumeOf(x), vy = volumeOf(y);
+    bool hx = vx > 0, hy = vy > 0;
+    if (hx != hy) return hx; // books with a volume number first
+    if (hx && vx != vy) return vx < vy;
+    int c = naturalCompare(titleSortKey(x->title), titleSortKey(y->title));
+    if (c != 0) return c < 0;
+    return naturalCompare(lowerCopy(x->path), lowerCopy(y->path)) < 0;
+}
+
+// Folder a book is in, relative to the "Books" folder. Books outside of any folder are "Unsorted"
+static std::string folderNameFor(const Book *b) {
+    std::string path = b->path;
+    size_t slash = path.find_last_of('/');
+    if (slash == std::string::npos) return "Unsorted";
+    std::string dir = path.substr(0, slash);
+    // strip the leading "Books" folder
+    size_t first = dir.find('/');
+    std::string top = dir.substr(0, first);
+    if (strcasecmp(top.c_str(), "Books") == 0) dir = (first == std::string::npos) ? std::string() : dir.substr(first + 1);
+    if (dir.empty()) return "Unsorted";
+    std::string out;
+    for (char c : dir) { if (c == '/') out += " / "; else out += c; }
+    return out;
+}
+
+// Name of the group (menu entry) a book belongs to
+static std::string groupNameFor(const Book *b) {
+    int mode = Device::getInstance().deviceSettings.libraryGrouping;
+    if (mode == 0) return b->author;
+    if (mode == 2) return folderNameFor(b);
+    if (!b->series.empty()) return b->series; // part of a series
+    std::string key = titleSortKey(b->title);
+    if (!key.empty() && isalpha((unsigned char)key[0])) return std::string(1, (char)toupper((unsigned char)key[0]));
+    return "#";
+}
+
+void BookHandler::loadMissingSeriesInfo()
+{
+    if (Device::getInstance().deviceSettings.libraryGrouping != 1) return; // only needed when grouping by series
+    for (Book *b : bookList) {
+        if (b->seriesChecked || b->badParse) continue;
+        std::string fileName = b->path;
+        std::string fullPath = std::string("/sdcard/") + fileName;
+        rtc_setCurrentlyParsing(fileName);
+        Epub *epub = new Epub(fullPath);
+        if (epub->load()) {
+            b->series = epub->get_series();
+            b->seriesIndex = epub->get_series_index();
+        }
+        delete epub;
+        rtc_clearCurrentlyParsing();
+        b->seriesChecked = true; // don't retry on every boot, even if there was no series info
+        saveBook(b);
+        vTaskDelay(1);
+    }
+}
+
+// Called when the grouping setting changes: regroup the already loaded books
+void BookHandler::regroupLibrary()
+{
+    Device &dev = Device::getInstance();
+    Device::getInstance().notificationHandler->drawNotification("Grouping library...");
+    loadMissingSeriesInfo();
+    // keep the active book in a matching group, so it is not mistaken for a favorite
+    for (Book *b : bookList) {
+        if (b->path == dev.activeBookPath) {
+            dev.activeAuthorName = groupNameFor(b);
+            break;
+        }
+    }
+    groupBooks();
+    dev.menuHandler->layoutReadMenu(authorList);
+    dev.menuHandler->authorMenu->selectedChildIndex = 0;
+}
+
+void BookHandler::groupBooks()
+{
+    Device &dev = Device::getInstance();
+    authorList.clear();
+    authorList.emplace_back("Favorite books");
+    dev.activeAuthorIndex = -1;
+    dev.activeBookIndex = dev.activeBookPath.empty() ? 0 : -1;
+
+    if (dev.deviceSettings.libraryGrouping == 1) {
+        // Series first (alphabetical), then the letter groups; inside a series by volume
+        std::stable_sort(bookList.begin(), bookList.end(), [](const Book *x, const Book *y) {
+            bool xs = !x->series.empty(), ys = !y->series.empty();
+            if (xs != ys) return xs; // series before single titles
+            if (xs) {
+                int c = naturalCompare(lowerCopy(x->series), lowerCopy(y->series));
+                if (c != 0) return c < 0;
+                return volumeOrderLess(x, y);
+            }
+            int c = naturalCompare(titleSortKey(x->title), titleSortKey(y->title));
+            if (c != 0) return c < 0;
+            return naturalCompare(lowerCopy(x->path), lowerCopy(y->path)) < 0;
+        });
+    } else if (dev.deviceSettings.libraryGrouping == 2) {
+        // Folders alphabetically ("Unsorted" last), inside a folder by volume / title
+        std::stable_sort(bookList.begin(), bookList.end(), [](const Book *x, const Book *y) {
+            std::string fx = folderNameFor(x), fy = folderNameFor(y);
+            bool ux = fx == "Unsorted", uy = fy == "Unsorted";
+            if (ux != uy) return uy;
+            if (fx != fy) {
+                int c = naturalCompare(lowerCopy(fx), lowerCopy(fy));
+                if (c != 0) return c < 0;
+            }
+            return volumeOrderLess(x, y);
+        });
+    }
+
+    // Sort books into authorList
     for (Book* b : bookList) {
+        const std::string groupName = groupNameFor(b);
         Author* foundAuthor = nullptr;
         int currentAuthorIndex = 0;
         for (auto& a : authorList) {
-            if (a.name == b->author) {
+            if (a.name == groupName) {
                 foundAuthor = &a;
                 break;
             }
@@ -779,13 +1088,13 @@ for (auto it = indexedBooks.begin(); it != indexedBooks.end();) {
 
         if (foundAuthor) {
             foundAuthor->bookList.push_back(b);
-            if (b->author == dev.activeAuthorName) {
+            if (groupName == dev.activeAuthorName) {
                 dev.activeAuthorIndex = currentAuthorIndex;
             }
         } else {
-            authorList.emplace_back(b->author);
+            authorList.emplace_back(groupName);
             authorList.back().bookList.push_back(b);
-            if (b->author == dev.activeAuthorName) {
+            if (groupName == dev.activeAuthorName) {
                 dev.activeAuthorIndex = authorList.size() - 1;
             }
             foundAuthor = &authorList.back();
@@ -814,7 +1123,7 @@ for (auto it = indexedBooks.begin(); it != indexedBooks.end();) {
         return; //if we boot into the simplereader we don't need to check the activebook
     }
 
-    // Step 5: Fallback active indices if missing
+    // Fallback active indices if missing
     if (dev.activeBookIndex == -1 && !bookList.empty()) {
         dev.activeBookIndex = 0;
         dev.activeBookPath = bookList[0]->path;
@@ -823,6 +1132,39 @@ for (auto it = indexedBooks.begin(); it != indexedBooks.end();) {
         dev.activeAuthorIndex = 0;
         dev.activeAuthorName = authorList[0].name;
     }
+}
+
+std::string BookHandler::groupNameForBook(const Book *book)
+{
+    return groupNameFor(book);
+}
+
+void BookHandler::markOpened(Book *book)
+{
+    if (!book) return;
+    uint32_t newest = 0;
+    for (Book *b : bookList) if (b->lastOpened > newest) newest = b->lastOpened;
+    if (book->lastOpened == newest && newest != 0) return; // already the most recent
+    book->lastOpened = newest + 1;
+    saveBook(book);
+}
+
+std::vector<Book*> BookHandler::getRecentBooks(size_t maxCount)
+{
+    // Books written by older firmware have no history. Treat the book that was active
+    // before the update as the most recent one so the card isn't empty after upgrading.
+    bool anyOpened = false;
+    for (Book *b : bookList) if (b->lastOpened > 0) { anyOpened = true; break; }
+    if (!anyOpened) {
+        auto it = indexedBooks.find(Device::getInstance().activeBookPath);
+        if (it != indexedBooks.end() && it->second->currentPage > 0) it->second->lastOpened = 1;
+    }
+
+    std::vector<Book*> recent;
+    for (Book *b : bookList) if (b->lastOpened > 0) recent.push_back(b);
+    std::sort(recent.begin(), recent.end(), [](const Book *a, const Book *b) { return a->lastOpened > b->lastOpened; });
+    if (recent.size() > maxCount) recent.resize(maxCount);
+    return recent;
 }
 
 void BookHandler::refreshFavorites()

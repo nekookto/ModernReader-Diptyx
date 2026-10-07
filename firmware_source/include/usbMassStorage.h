@@ -21,6 +21,18 @@ extern "C" {
 esp_err_t usb_msc_sdmmc_start(gpio_num_t clk, gpio_num_t cmd, gpio_num_t d0, int bus_width);
 
 /**
+ * Why the last usb_msc_sdmmc_start() failed: a short stage name ("card", "usb", "msc") and the error code.
+ */
+const char* usb_msc_last_failure_stage(void);
+void usb_msc_set_stage(const char* stage);
+const char* usb_msc_crash_stage(void);   // "" if the last run did not end inside transfer mode
+void usb_msc_clear_stage(void);
+
+/** Safely shut down the USB serial console + CDC + USB driver before starting mass storage. */
+void usb_console_teardown(void);
+esp_err_t usb_msc_last_failure_code(void);
+
+/**
  * Stop USB MSC, deinit SDMMC host and free resources.
  */
 void usb_msc_stop(void);

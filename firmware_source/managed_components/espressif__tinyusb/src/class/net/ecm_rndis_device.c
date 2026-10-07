@@ -35,8 +35,6 @@
 #include "net_device.h"
 #include "rndis_protocol.h"
 
-extern void rndis_class_set_handler(uint8_t *data, int size); /* found in ./misc/networking/rndis_reports.c */
-
 #define CFG_TUD_NET_PACKET_PREFIX_LEN sizeof(rndis_data_packet_t)
 #define CFG_TUD_NET_PACKET_SUFFIX_LEN 0
 
@@ -50,9 +48,10 @@ typedef struct {
   uint8_t itf_num;      // Index number of Management Interface, +1 for Data Interface
   uint8_t itf_data_alt; // Alternate setting of Data Interface. 0 : inactive, 1 : active
 
-  uint8_t ep_notif;
   uint8_t ep_in;
   uint8_t ep_out;
+  uint16_t ep_size;     // bulk endpoint max packet size (IN and OUT assumed equal)
+  uint8_t ep_notif;
 
   bool ecm_mode;
 
@@ -81,23 +80,35 @@ typedef struct {
 static netd_interface_t _netd_itf;
 CFG_TUD_MEM_SECTION static netd_epbuf_t _netd_epbuf;
 static bool can_xmit;
+static bool ecm_link_is_up = true;  // Store link state for ECM mode
+
+//--------------------------------------------------------------------+
+// Weak stubs: invoked if no strong implementation is available
+//--------------------------------------------------------------------+
+TU_ATTR_WEAK void tud_network_set_packet_filter_cb(uint16_t packet_filter) {
+  (void) packet_filter;
+}
 
 void tud_network_recv_renew(void) {
-  usbd_edpt_xfer(0, _netd_itf.ep_out, _netd_epbuf.rx, NETD_PACKET_SIZE);
+  usbd_edpt_xfer(0, _netd_itf.ep_out, _netd_epbuf.rx, NETD_PACKET_SIZE, false);
 }
 
 static void do_in_xfer(uint8_t *buf, uint16_t len) {
   can_xmit = false;
-  usbd_edpt_xfer(0, _netd_itf.ep_in, buf, len);
+  usbd_edpt_xfer(0, _netd_itf.ep_in, buf, len, false);
 }
 
 void netd_report(uint8_t *buf, uint16_t len) {
   const uint8_t rhport = 0;
   len = tu_min16(len, sizeof(ecm_notify_t));
 
-  TU_VERIFY(usbd_edpt_claim(rhport, _netd_itf.ep_notif), );
+  if (!usbd_edpt_claim(rhport, _netd_itf.ep_notif)) {
+    TU_LOG1("ECM: Failed to claim notification endpoint\n");
+    return;
+  }
+
   memcpy(_netd_epbuf.notify, buf, len);
-  usbd_edpt_xfer(rhport, _netd_itf.ep_notif, _netd_epbuf.notify, len);
+  usbd_edpt_xfer(rhport, _netd_itf.ep_notif, _netd_epbuf.notify, len, false);
 }
 
 //--------------------------------------------------------------------+
@@ -173,6 +184,9 @@ uint16_t netd_open(uint8_t rhport, tusb_desc_interface_t const * itf_desc, uint1
   // Pair of endpoints
   TU_ASSERT(TUSB_DESC_ENDPOINT == tu_desc_type(p_desc), 0);
 
+  // Save the actual bulk endpoint size (IN and OUT assumed equal)
+  _netd_itf.ep_size = tu_edpt_packet_size((tusb_desc_endpoint_t const *) p_desc);
+
   if (_netd_itf.ecm_mode) {
     // ECM by default is in-active, save the endpoint attribute
     // to open later when received setInterface
@@ -180,8 +194,6 @@ uint16_t netd_open(uint8_t rhport, tusb_desc_interface_t const * itf_desc, uint1
   } else {
     // Open endpoint pair for RNDIS
     TU_ASSERT(usbd_open_edpt_pair(rhport, p_desc, 2, TUSB_XFER_BULK, &_netd_itf.ep_out, &_netd_itf.ep_in), 0);
-
-    tud_network_init_cb();
 
     // we are ready to transmit a packet
     can_xmit = true;
@@ -196,23 +208,24 @@ uint16_t netd_open(uint8_t rhport, tusb_desc_interface_t const * itf_desc, uint1
 }
 
 static void ecm_report(bool nc) {
-  const ecm_notify_t ecm_notify_nc = {
+  ecm_notify_t ecm_notify_nc = {
     .header = {
       .bmRequestType = 0xA1,
       .bRequest = 0, /* NETWORK_CONNECTION aka NetworkConnection */
-      .wValue = 1,   /* Connected */
+      .wValue = ecm_link_is_up ? 1 : 0,   /* Use current link state */
       .wLength = 0,
     },
   };
 
+  const uint32_t link_bps = (tud_speed_get() == TUSB_SPEED_HIGH) ? 480000000U : 12000000U;
   const ecm_notify_t ecm_notify_csc = {
     .header = {
       .bmRequestType = 0xA1,
       .bRequest = 0x2A, /* CONNECTION_SPEED_CHANGE aka ConnectionSpeedChange */
       .wLength = 8,
     },
-    .downlink = 9728000,
-    .uplink = 9728000,
+    .downlink = link_bps,
+    .uplink = link_bps,
   };
 
   ecm_notify_t notify = (nc) ? ecm_notify_nc : ecm_notify_csc;
@@ -259,7 +272,6 @@ bool netd_control_xfer_cb (uint8_t rhport, uint8_t stage, tusb_control_request_t
 
                 // TODO should be merge with RNDIS's after endpoint opened
                 // Also should have opposite callback for application to disable network !!
-                tud_network_init_cb();
                 can_xmit = true; // we are ready to transmit a packet
                 tud_network_recv_renew(); // prepare for incoming packets
               }
@@ -285,8 +297,12 @@ bool netd_control_xfer_cb (uint8_t rhport, uint8_t stage, tusb_control_request_t
         if (_netd_itf.ecm_mode) {
           /* the only required CDC-ECM Management Element Request is SetEthernetPacketFilter */
           if (0x43 /* SET_ETHERNET_PACKET_FILTER */ == request->bRequest) {
+            tud_network_set_packet_filter_cb(request->wValue);
             tud_control_xfer(rhport, request, NULL, 0);
-            ecm_report(true);
+            // Only send connection notification if link is up
+            if (ecm_link_is_up) {
+              ecm_report(true);
+            }
           }
         } else {
           if (request->bmRequestType_bit.direction == TUSB_DIR_IN) {
@@ -353,8 +369,7 @@ bool netd_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uint32_
   /* data transmission finished */
   if (ep_addr == _netd_itf.ep_in) {
     /* TinyUSB requires the class driver to implement ZLP (since ZLP usage is class-specific) */
-
-    if (xferred_bytes && (0 == (xferred_bytes % CFG_TUD_NET_ENDPOINT_SIZE))) {
+    if (xferred_bytes > 0 && 0 == (xferred_bytes & (_netd_itf.ep_size-1))) {
       do_in_xfer(NULL, 0); /* a ZLP is needed */
     } else {
       /* we're finally finished */
@@ -363,9 +378,8 @@ bool netd_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uint32_
   }
 
   if (_netd_itf.ecm_mode && (ep_addr == _netd_itf.ep_notif)) {
-    if (sizeof(tusb_control_request_t) == xferred_bytes) {
-      ecm_report(false);
-    }
+    // Notification transfer complete - endpoint is now free
+    // Don't automatically send speed change notification after link state changes
   }
 
   return true;
@@ -396,6 +410,33 @@ void tud_network_xmit(void *ref, uint16_t arg) {
   }
 
   do_in_xfer(_netd_epbuf.tx, len);
+}
+
+// Set the network link state (up/down) and notify the host
+void tud_network_link_state(uint8_t rhport, bool is_up) {
+  (void)rhport;
+
+  if (_netd_itf.ecm_mode) {
+    ecm_link_is_up = is_up;
+
+    // For ECM mode, send network connection notification only
+    // Don't trigger speed change notification for link state changes
+    ecm_notify_t notify = {
+      .header = {
+        .bmRequestType = 0xA1,
+        .bRequest = 0,        /* NETWORK_CONNECTION */
+        .wValue = is_up ? 1 : 0,  /* 0 = disconnected, 1 = connected */
+        .wLength = 0,
+      },
+    };
+    notify.header.wIndex = _netd_itf.itf_num;
+    netd_report((uint8_t *)&notify, sizeof(notify.header));
+  } else {
+    // For RNDIS mode, we would need to implement RNDIS status indication
+    // This is more complex and requires RNDIS_INDICATE_STATUS_MSG
+    // For now, RNDIS doesn't support dynamic link state changes
+    (void)is_up;
+  }
 }
 
 #endif

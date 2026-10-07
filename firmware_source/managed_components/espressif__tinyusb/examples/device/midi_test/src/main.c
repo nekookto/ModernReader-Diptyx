@@ -68,9 +68,7 @@ int main(void) {
   };
   tusb_init(BOARD_TUD_RHPORT, &dev_init);
 
-  if (board_init_after_tusb) {
-    board_init_after_tusb();
-  }
+  board_init_after_tusb();
 
   while (1) {
     tud_task(); // tinyusb device task
@@ -136,7 +134,7 @@ void midi_task(void)
   }
 
   // send note periodically
-  if (board_millis() - start_ms < 286) {
+  if (tusb_time_millis_api() - start_ms < 286) {
     return; // not enough time
   }
   start_ms += 286;
@@ -176,7 +174,7 @@ void led_blinking_task(void)
   static bool led_state = false;
 
   // Blink every interval ms
-  if ( board_millis() - start_ms < blink_interval_ms) return; // not enough time
+  if ( tusb_time_millis_api() - start_ms < blink_interval_ms) return; // not enough time
   start_ms += blink_interval_ms;
 
   board_led_write(led_state);

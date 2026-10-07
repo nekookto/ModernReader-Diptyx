@@ -1,3 +1,14 @@
+# Modern Reader
+
+Modern Reader is a fork of the firmware of the [Diptyx E-reader](https://github.com/MartijndenHoed/Diptyx) by Martijn den Hoed and the Diptyx team,
+based on Diptyx firmware 1.0.2. See `CHANGELOG.md` for what changed, `NOTICE.md` for credits and `LICENSE` for the MIT license.
+It is not affiliated with or endorsed by Diptyx.
+
+Build: `pio run` (PlatformIO, ESP-IDF). Flash `.pio/build/esp32-s3-devkitm-1/firmware.bin` at address `0x10000` to keep your settings.
+The manual and firmware info screens are the EPUB files in `data/` (they live in the assets partition). To update them run `pio run -t buildfs` and flash `.pio/build/esp32-s3-devkitm-1/littlefs.bin` at address `0x910000` (books and settings are not touched).
+
+---
+
 ## Firmware source
 Here, the firmware source of the Diptyx E-reader can be found. This firmware was developed in VSCODE, with PlatformIO and ESP-IDF.
 

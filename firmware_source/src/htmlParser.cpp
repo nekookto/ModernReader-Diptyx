@@ -10,6 +10,16 @@ const std::vector<std::string_view> EMPTY_LINE_TAGS = {"br", "br/"};
 const std::vector<std::string_view> INLINE_TAGS = {"span", "a"};
 const std::vector<std::string_view> BOLD_TAGS = {"b","strong"};
 const std::vector<std::string_view> ITALIC_TAGS = {"i", "em"};
+// Case-insensitive check for the picture types the firmware can decode (.jpg, .jpeg, .png)
+static bool hasImageExtension(const std::string &name)
+{
+  size_t dot = name.find_last_of('.');
+  if (dot == std::string::npos) return false;
+  std::string ext = name.substr(dot + 1);
+  for (auto &c : ext) c = (char)tolower((unsigned char)c);
+  return ext == "jpg" || ext == "jpeg" || ext == "png";
+}
+
 const std::vector<std::string_view> IMAGE_TAGS = {"img"};
 const std::vector<std::string_view> COVER_TAGS = {"image"};
 const std::vector<std::string_view> SKIP_TAGS = {"title", "style","hidden"};
@@ -99,7 +109,7 @@ bool HtmlParser::VisitEnter(const tinyxml2::XMLElement &element, const tinyxml2:
     if (src)
     {
       std::string srcStr = std::string(src);
-      if ( (srcStr.size() >= 4 && srcStr.compare(srcStr.size() - 4, 4, ".png") == 0) || (srcStr.size() >= 4 && srcStr.compare(srcStr.size() - 4, 4, ".jpg") == 0) || (srcStr.size() >= 5 && srcStr.compare(srcStr.size() - 5, 5, ".jpeg") == 0)){
+      if (hasImageExtension(srcStr)) {
         //src is an image
        
         ESP_LOGI(TAG, "image found found: %s", src);
@@ -173,7 +183,7 @@ bool HtmlParser::VisitEnter(const tinyxml2::XMLElement &element, const tinyxml2:
     {
       std::string srcStr = std::string(src);
 
-      if ( (srcStr.size() >= 4 && srcStr.compare(srcStr.size() - 4, 4, ".jpg") == 0) || (srcStr.size() >= 5 && srcStr.compare(srcStr.size() - 5, 5, ".jpeg") == 0)) {
+      if (hasImageExtension(srcStr)) {
       // src ends with ".jpg"
         ESP_LOGI(TAG, "image found found: %s", src);
         std::string imagePath = resolve_relative_path(

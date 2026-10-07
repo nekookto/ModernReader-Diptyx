@@ -91,17 +91,13 @@ int main(void) {
   };
   tusb_init(BOARD_TUH_RHPORT, &host_init);
 
-  if (board_init_after_tusb) {
-    board_init_after_tusb();
-  }
+  board_init_after_tusb();
 
   while (1) {
     tud_task(); // tinyusb device task
     tuh_task(); // tinyusb host task
     led_blinking_task();
   }
-
-  return 0;
 }
 
 //--------------------------------------------------------------------+
@@ -190,7 +186,9 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance) {
 // look up new key in previous keys
 static inline bool find_key_in_report(hid_keyboard_report_t const* report, uint8_t keycode) {
   for (uint8_t i = 0; i < 6; i++) {
-    if (report->keycode[i] == keycode) return true;
+    if (report->keycode[i] == keycode) {
+      return true;
+    }
   }
 
   return false;
@@ -230,7 +228,9 @@ static void process_kbd_report(uint8_t dev_addr, hid_keyboard_report_t const* re
     // TODO example skips key released
   }
 
-  if (flush) tud_cdc_write_flush();
+  if (flush) {
+    tud_cdc_write_flush();
+  }
 
   prev_report = *report;
 }
@@ -282,7 +282,7 @@ void led_blinking_task(void) {
   static bool led_state = false;
 
   // Blink every interval ms
-  if (board_millis() - start_ms < blink_interval_ms) return; // not enough time
+  if (tusb_time_millis_api() - start_ms < blink_interval_ms) return; // not enough time
   start_ms += blink_interval_ms;
 
   board_led_write(led_state);

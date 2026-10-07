@@ -31,8 +31,51 @@
 //--------------------------------------------------------------------+
 // TASK API
 //--------------------------------------------------------------------+
+typedef k_tid_t osal_task_handle_t;
+
+TU_ATTR_ALWAYS_INLINE static inline osal_task_handle_t osal_task_get_current_handle(void) {
+  return k_current_get();
+}
+
 TU_ATTR_ALWAYS_INLINE static inline void osal_task_delay(uint32_t msec) {
   k_msleep(msec);
+}
+
+TU_ATTR_ALWAYS_INLINE static inline uint32_t osal_time_millis(void) {
+  return k_uptime_get_32();
+}
+
+//--------------------------------------------------------------------+
+// Spinlock API
+//--------------------------------------------------------------------+
+typedef struct {
+  struct k_spinlock lock;
+  k_spinlock_key_t key;
+} osal_spinlock_t;
+
+#define OSAL_SPINLOCK_DEF(_name, _int_set) \
+  osal_spinlock_t _name
+
+TU_ATTR_ALWAYS_INLINE static inline void osal_spin_init(osal_spinlock_t *ctx) {
+  (void) ctx;
+}
+
+TU_ATTR_ALWAYS_INLINE static inline void osal_spin_deinit(osal_spinlock_t *ctx) {
+  (void) ctx;
+}
+
+TU_ATTR_ALWAYS_INLINE static inline void osal_spin_lock(osal_spinlock_t *ctx, bool in_isr) {
+  if (!TUP_MCU_MULTIPLE_CORE && in_isr) {
+    return; // single core MCU does not need to lock in ISR
+  }
+  ctx->key = k_spin_lock(&ctx->lock);
+}
+
+TU_ATTR_ALWAYS_INLINE static inline void osal_spin_unlock(osal_spinlock_t *ctx, bool in_isr) {
+  if (!TUP_MCU_MULTIPLE_CORE && in_isr) {
+    return; // single core MCU does not need to lock in ISR
+  }
+  k_spin_unlock(&ctx->lock, ctx->key);
 }
 
 //--------------------------------------------------------------------+

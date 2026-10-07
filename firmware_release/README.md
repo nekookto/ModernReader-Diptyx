@@ -1,17 +1,19 @@
-Here, the compiled Diptyx firmware can be found. 
+# Firmware files
 
-To enter flash mode on your device, make sure it is fully turned off for at least 20 seconds. Then, press and hold the center joystick whilst connecting the device with a USB type-C cable to your pc. 
+## Modern Reader 1.0.0 (full clean install)
 
-From there, you can flash the firmware binary with your preferred ESP32 flasher (such as https://www.espboards.dev/tools/program/), in a browser that supports WebSerial (Chrome, Edge, Opera)
+Download [`ModernReader_v1.0.0_merged.bin`](ModernReader_v1.0.0_merged.bin) and flash it at **`0x0000`** using an ESP32-S3-compatible flasher. The merged image contains the bootloader, partition table, Modern Reader application, and built-in assets. Its SHA-256 checksum is in [`ModernReader_v1.0.0_merged.bin.sha256`](ModernReader_v1.0.0_merged.bin.sha256).
 
+**This is a clean/full flash. It overwrites the device flash and erases existing settings, book data, and metadata. Back up anything important first.** It is intended only for the Diptyx E-reader hardware.
 
+To enter USB flash mode, turn the device fully off for about 20 seconds, then hold the center joystick while connecting USB-C. Use an ESP32-S3-compatible flasher; browser-based flashers require WebSerial support.
 
-## Patching
-To patch the firmware without resetting all settings upload the diptyx_firmware **patch** file, select address **0x10000**, and proceed to flash the device.
+For a source-built application update that preserves existing data, see the [build and flashing instructions](../README.md#build-from-source) in the project README. Flash the app-only `firmware.bin` at `0x10000`; do not use the full merged image when you need to preserve books or settings.
 
+## Inherited upstream files
 
-## Fully flashing
-To fully flash the device, upload the diptyx_firmware file, select address **0x0000**, and proceed to flash the device. Re-flashing the firmware will reset the device settings and the book metadata stored on the device itself (only if selected from the settings)
+The `diptyx_firmware_1.0.1*` and `diptyx_firmware_1.0.2*` files in this folder are inherited from the original Diptyx project. They are unchanged upstream binaries and **do not include Modern Reader**. Do not flash them if you are expecting the fork’s features.
 
+The supplied `modern-reader-assets-littlefs.bin` is a 1 MB **assets partition only** (built-in manual and firmware-info EPUBs), not a complete firmware image. Flash it at `0x910000` only when you specifically need to update those assets.
 
-After flashing, remove the USB cable, wait for 20 seconds, and boot the device with the power button.
+To build Modern Reader, follow the instructions in the [project README](../README.md#build-from-source). The application image is written at `0x10000`; the full merged image is written at `0x0000`. Read the README’s flashing cautions and back up important data before flashing.

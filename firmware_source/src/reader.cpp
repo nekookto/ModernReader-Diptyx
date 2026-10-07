@@ -57,6 +57,7 @@ void Reader::init(Book *book,Renderer* renderer)
     this->book = book;
     this->currentBookPath = book->path;
     this->currentChapter = 0;
+    this->middleEdgesSeen = Device::getInstance().buttonEdgeCount[MIDDLE_BUTTON];
 
     this->epub = new Epub(std::string("/sdcard/") + this->currentBookPath);
     ESP_LOGI(TAG, "book path: %s", this->currentBookPath.c_str());
@@ -114,6 +115,12 @@ void Reader::doWhileListening(std::function<void()> func)
     if(Device::getInstance().buttonLatchedStates[PAGE_LEFT_BUTTON])  { leftPageAction(); return; }
     if(Device::getInstance().buttonLatchedStates[ARROW_DOWN_BUTTON]) { downButtonAction(); return; }
     if(Device::getInstance().buttonLatchedStates[ARROW_UP_BUTTON])   { upButtonAction(); return; }
+    if(state==State::BookMarkMenu && bookMarkMenuHandler && bookMarkMenuHandler->chapterListOpen)
+    {
+        // a quick second tap can land inside the debounce window and never get latched: pick it up here
+        if(Device::getInstance().tapPending(ARROW_DOWN_BUTTON, bookMarkMenuHandler->chapterDownTap)) { downButtonAction(); return; }
+        if(Device::getInstance().tapPending(ARROW_UP_BUTTON, bookMarkMenuHandler->chapterUpTap)) { upButtonAction(); return; }
+    }
     Device::getInstance().clearButtonLatches();
     Device::getInstance().setLatchTimeOut(100000);
 }
@@ -211,7 +218,7 @@ void Reader::nextPage()
     Device::getInstance().setLatchTimeOut(100000);
     if(book->currentPage >= book->totalPageCount-2)
     {
-        middleButtonAction();
+        exitToLibrary();
         return;
     }
     book->currentPage += 2;
@@ -327,7 +334,8 @@ void Reader::prevPage()
     }
     else
     {
-        middleButtonAction();
+        exitToLibrary(); // already on the first page: leave the book
+        return;
     }
 
     if(Device::getInstance().buttonLatchedStates[MIDDLE_BUTTON]) {middleButtonAction(); return;}
@@ -447,23 +455,42 @@ void Reader::leftButtonAction()
     // //Device::buzz();
 }
 
+void Reader::openMiniMenu()
+{
+    state = State::BookMarkMenu;
+    bookMarkMenuHandler = new BookMarkMenuHandler(book,renderer,epub,leftPageFrameBuffer,rightPageFrameBuffer);
+    bookMarkMenuHandler->bookMarkOnPage = checkBookMark();
+    bookMarkMenuHandler->selectedBookMarkIndex = findCurrentBookMarkIndex();
+    doWhileListening([&]() {bookMarkMenuHandler->drawMenu();});
+}
+
+void Reader::exitToLibrary()
+{
+    if (epub) {
+        delete epub;
+        epub = nullptr;
+    }
+    Device::getInstance().state=Device::State::Menu;
+    renderer->epd.forceRefresh();
+    Device::getInstance().bookHandler->saveBook(book);
+    Device::getInstance().menuHandler->drawMenu();
+    Device::getInstance().saveAppState();
+}
+
 void Reader::upButtonAction()
 {
     if(state==State::Reading)
     {
-        //Device::buzz();
-        state = State::BookMarkMenu;
-        bookMarkMenuHandler = new BookMarkMenuHandler(book,renderer,epub,leftPageFrameBuffer,rightPageFrameBuffer);
-        bookMarkMenuHandler->bookMarkOnPage = checkBookMark();
-        bookMarkMenuHandler->currentTocIndex = epub->get_toc_index_for_spine_index(getCurrentChapter(book->currentPage));
-        bookMarkMenuHandler->selectedBookMarkIndex = findCurrentBookMarkIndex();
-        doWhileListening([&]() {bookMarkMenuHandler->drawMenu();});
+        openMiniMenu();
     }
     else if(state==State::BookMarkMenu)
     {
-        if(bookMarkMenuHandler->currentVerticalElementIndex<bookMarkMenuHandler->maxVerticalElements)
+        if(bookMarkMenuHandler->chapterListOpen)
         {
-            //Device::buzz();
+            doWhileListening([&]() {bookMarkMenuHandler->scrollChapters(-1);});
+        }
+        else if(bookMarkMenuHandler->currentVerticalElementIndex<bookMarkMenuHandler->maxVerticalElements)
+        {
             bookMarkMenuHandler->currentVerticalElementIndex+=1;
             doWhileListening([&]() {bookMarkMenuHandler->drawMenu();});
         }
@@ -474,19 +501,18 @@ void Reader::downButtonAction()
 {
     if(state==State::Reading)
     {
-        //Device::buzz();
         addBookMark();
         if(checkBookMark()) renderer->drawBookMark(rightPageFrameBuffer,false);
         else renderer->drawBookMark(rightPageFrameBuffer,true);
         this->renderer->epd.DisplayPictureBoth(leftPageFrameBuffer,rightPageFrameBuffer);
-        //Device::getInstance().bookHandler->saveBook(book);
     }
     else if(state==State::BookMarkMenu)
     {
-        //Device::buzz();
-        // if(bookMarkMenuHandler->selectedBookMarkIndex<  static_cast<int>(book->bookMarks.size())-1) bookMarkMenuHandler->selectedBookMarkIndex++;
-        // bookMarkMenuHandler->drawMenu();
-        if(bookMarkMenuHandler->currentVerticalElementIndex<=0)
+        if(bookMarkMenuHandler->chapterListOpen)
+        {
+            doWhileListening([&]() {bookMarkMenuHandler->scrollChapters(1);});
+        }
+        else if(bookMarkMenuHandler->currentVerticalElementIndex<=0)
         {
             state = State::Reading;
             delete bookMarkMenuHandler;
@@ -497,26 +523,25 @@ void Reader::downButtonAction()
             bookMarkMenuHandler->currentVerticalElementIndex-=1;
             doWhileListening([&]() {bookMarkMenuHandler->drawMenu();});
         }
-
     }
-
 }
 
 void Reader::leftPageAction()
 {
     if(state==State::Reading)
     {
-        //Device::buzz();
         prevPage();
-        //Device::getInstance().bookHandler->saveBook(book);
     }
     else if(state==State::BookMarkMenu)
     {
-        //Device::buzz();
+        if(bookMarkMenuHandler->chapterListOpen)
+        {
+            bookMarkMenuHandler->closeChapterList(); // back to the mini menu
+            return;
+        }
         bookMarkMenuHandler->currentMenuElementIndex-=1;
         if(bookMarkMenuHandler->currentMenuElementIndex<0) bookMarkMenuHandler->currentMenuElementIndex=bookMarkMenuHandler->menuElements.size()-1;
-        if(bookMarkMenuHandler->menuElements[bookMarkMenuHandler->currentMenuElementIndex].ID==BookMarkMenuHandler::MenuElementID::GotoChapter) bookMarkMenuHandler->currentVerticalElementIndex = bookMarkMenuHandler->currentTocIndex+1;
-        else bookMarkMenuHandler->currentVerticalElementIndex = 0;
+        bookMarkMenuHandler->currentVerticalElementIndex = 0;
         doWhileListening([&]() {bookMarkMenuHandler->drawMenu();});
     }
 }
@@ -525,17 +550,18 @@ void Reader::rightPageAction()
 {
     if(state==State::Reading)
     {
-        //Device::buzz();
         nextPage();
-        //Device::getInstance().bookHandler->saveBook(book);
     }
     else if(state==State::BookMarkMenu)
     {
-        //Device::buzz();
+        if(bookMarkMenuHandler->chapterListOpen)
+        {
+            middleButtonAction(); // open the highlighted chapter
+            return;
+        }
         bookMarkMenuHandler->currentMenuElementIndex+=1;
         if(bookMarkMenuHandler->currentMenuElementIndex>bookMarkMenuHandler->menuElements.size()-1) bookMarkMenuHandler->currentMenuElementIndex=0;
-        if(bookMarkMenuHandler->menuElements[bookMarkMenuHandler->currentMenuElementIndex].ID==BookMarkMenuHandler::MenuElementID::GotoChapter) bookMarkMenuHandler->currentVerticalElementIndex = bookMarkMenuHandler->currentTocIndex+1;
-        else bookMarkMenuHandler->currentVerticalElementIndex = 0;
+        bookMarkMenuHandler->currentVerticalElementIndex = 0;
         doWhileListening([&]() {bookMarkMenuHandler->drawMenu();});
     }
 }
@@ -543,123 +569,87 @@ void Reader::rightPageAction()
 
 void Reader::middleButtonAction()
 {
+    // a held middle button must not open and immediately close the menu: act once per physical press
+    uint32_t edges = Device::getInstance().buttonEdgeCount[MIDDLE_BUTTON];
+    if(edges == middleEdgesSeen && state==State::Reading) return;
+    middleEdgesSeen = edges;
+
     if(state==State::Reading)
     {
-       // Device::buzz();
-        if (epub) {
-        delete epub;
-        }
-        Device::getInstance().state=Device::State::Menu;
-        //Device::getInstance()->saveAppState();
-        renderer->epd.forceRefresh();
-
-        //std::static_pointer_cast<BookElement> (
-        //std::static_pointer_cast<MenuElement>(Device::getInstance().menuHandler->currentElement)->children[
-        //std::static_pointer_cast<MenuElement>(Device::getInstance().menuHandler->currentElement)->selectedChildIndex
-        //])->elementDescription = std::to_string(book->currentPage+1) + "/" + std::to_string(book->totalPageCount); //update the pagecount of the book icon //actually book descriptions auto update now
-
-        Device::getInstance().bookHandler->saveBook(book);
-        Device::getInstance().menuHandler->drawMenu();
-        Device::getInstance().saveAppState();
-        //Device::buzz();
+        openMiniMenu();
     }
     else if(state==State::BookMarkMenu)
     {
-        // if(bookMarkMenuHandler->selectedBookMarkIndex!=-1) book->currentPage=book->bookMarks[bookMarkMenuHandler->selectedBookMarkIndex];
-        // state = State::Reading;
-        // delete bookMarkMenuHandler;
-        // openPage();
-        if(bookMarkMenuHandler->menuElements[bookMarkMenuHandler->currentMenuElementIndex].ID==BookMarkMenuHandler::MenuElementID::Return)
+        BookMarkMenuHandler *menu = bookMarkMenuHandler;
+        if(menu->chapterListOpen)
         {
-            //Device::buzz();
-                state = State::Reading;
-            delete bookMarkMenuHandler;
-            renderer->epd.forceRefresh();
-            openPage();
-            //Device::getInstance().bookHandler->saveBook(book);
-        }
-        else if(bookMarkMenuHandler->menuElements[bookMarkMenuHandler->currentMenuElementIndex].ID==BookMarkMenuHandler::MenuElementID::pageDisplay)
-        {
-            //Device::buzz();
-            Device::getInstance().deviceSettings.showPagePercentage = !Device::getInstance().deviceSettings.showPagePercentage;
-                state = State::Reading;
-            delete bookMarkMenuHandler;
-            renderer->epd.forceRefresh();
-            Device::getInstance().saveSettings();
-            openPage();
-            //Device::getInstance().bookHandler->saveBook(book);
-        }
-        else if(bookMarkMenuHandler->menuElements[bookMarkMenuHandler->currentMenuElementIndex].ID==BookMarkMenuHandler::MenuElementID::NextChapt)
-        {
-            //Device::buzz();
+            if(menu->chapterEntries.empty()) { menu->closeChapterList(); return; }
+            book->currentPage = getCurrentPageAbsolute(menu->chapterSpine(),0);
             state = State::Reading;
             delete bookMarkMenuHandler;
             renderer->epd.forceRefresh();
-            nextChapter();
-            //Device::getInstance().bookHandler->saveBook(book);
+            openPage();
+            return;
         }
-        else if(bookMarkMenuHandler->menuElements[bookMarkMenuHandler->currentMenuElementIndex].ID==BookMarkMenuHandler::MenuElementID::PrevChapt)
+
+        const BookMarkMenuHandler::MenuElementID id = menu->menuElements[menu->currentMenuElementIndex].ID;
+        if(id==BookMarkMenuHandler::MenuElementID::Return)
         {
-            //Device::buzz();
             state = State::Reading;
             delete bookMarkMenuHandler;
             renderer->epd.forceRefresh();
-            prevChapter();
-            //Device::getInstance().bookHandler->saveBook(book);
+            openPage();
         }
-        else if(bookMarkMenuHandler->menuElements[bookMarkMenuHandler->currentMenuElementIndex].ID==BookMarkMenuHandler::MenuElementID::AddMark)
+        else if(id==BookMarkMenuHandler::MenuElementID::ChapterList)
         {
-            //Device::buzz();
-            addBookMark();
-            bookMarkMenuHandler->bookMarkOnPage = !bookMarkMenuHandler->bookMarkOnPage;
-            if(checkBookMark()) renderer->drawBookMark(rightPageFrameBuffer,false);
-            else renderer->drawBookMark(rightPageFrameBuffer,true);
-            doWhileListening([&]() {bookMarkMenuHandler->drawMenu();});
-            this->renderer->epd.DisplayPictureBoth(leftPageFrameBuffer,rightPageFrameBuffer);
-            //Device::getInstance().bookHandler->saveBook(book);
+            menu->openChapterList(getCurrentChapter(book->currentPage));
         }
-        else if(bookMarkMenuHandler->menuElements[bookMarkMenuHandler->currentMenuElementIndex].ID==BookMarkMenuHandler::MenuElementID::ToggleNightMode)
+        else if(id==BookMarkMenuHandler::MenuElementID::Library)
         {
-            //Device::buzz();
-            Device::getInstance().deviceSettings.nightMode = !Device::getInstance().deviceSettings.nightMode;
-            //this->renderer->epd.DisplayPictureBoth(leftPageFrameBuffer,rightPageFrameBuffer);
-            Device::getInstance().saveSettings();
-            renderer->epd.forceRefresh();
-            doWhileListening([&]() {bookMarkMenuHandler->drawMenu();});
+            state = State::Reading;
+            delete bookMarkMenuHandler;
+            exitToLibrary();
         }
-        else if(bookMarkMenuHandler->menuElements[bookMarkMenuHandler->currentMenuElementIndex].ID==BookMarkMenuHandler::MenuElementID::ToggleSunlightMode)
+        else if(id==BookMarkMenuHandler::MenuElementID::Toggles)
         {
-            //Device::buzz();
-            Device::getInstance().deviceSettings.sunlightMode = !Device::getInstance().deviceSettings.sunlightMode;
-            //this->renderer->epd.DisplayPictureBoth(leftPageFrameBuffer,rightPageFrameBuffer);
-            Device::getInstance().saveSettings();
-            renderer->epd.forceRefresh();
-            renderer->drawBattery(rightPageFrameBuffer,Device::getInstance().getBatteryPercentage());
-            doWhileListening([&]() {bookMarkMenuHandler->drawMenu();});
-        }
-        else if(bookMarkMenuHandler->menuElements[bookMarkMenuHandler->currentMenuElementIndex].ID==BookMarkMenuHandler::MenuElementID::GotoMark)
-        {
-            if(bookMarkMenuHandler->currentVerticalElementIndex!=0)
+            int row = menu->currentVerticalElementIndex-1;
+            if(row == BookMarkMenuHandler::ToggleDarkMode)
             {
-                //Device::buzz();
-                book->currentPage=book->bookMarks[bookMarkMenuHandler->currentVerticalElementIndex-1].pageIndex;
+                Device::getInstance().deviceSettings.nightMode = !Device::getInstance().deviceSettings.nightMode;
+                Device::getInstance().saveSettings();
+                renderer->epd.forceRefresh();
+                menu->forceFullDraw = true;
+                doWhileListening([&]() {bookMarkMenuHandler->drawMenu();});
+            }
+            else if(row == BookMarkMenuHandler::ToggleSunlight)
+            {
+                Device::getInstance().deviceSettings.sunlightMode = !Device::getInstance().deviceSettings.sunlightMode;
+                Device::getInstance().saveSettings();
+                renderer->epd.forceRefresh();
+                renderer->drawBattery(rightPageFrameBuffer,Device::getInstance().getBatteryPercentage());
+                menu->forceFullDraw = true;
+                doWhileListening([&]() {bookMarkMenuHandler->drawMenu();});
+            }
+            else if(row == BookMarkMenuHandler::ToggleProgress)
+            {
+                // the page numbers are part of the rendered pages, so go back to the book to redraw them
+                Device::getInstance().deviceSettings.showPagePercentage = !Device::getInstance().deviceSettings.showPagePercentage;
+                state = State::Reading;
+                delete bookMarkMenuHandler;
+                renderer->epd.forceRefresh();
+                Device::getInstance().saveSettings();
+                openPage();
+            }
+        }
+        else if(id==BookMarkMenuHandler::MenuElementID::GotoMark)
+        {
+            if(menu->currentVerticalElementIndex!=0)
+            {
+                book->currentPage=book->bookMarks[menu->currentVerticalElementIndex-1].pageIndex;
                 state = State::Reading;
                 delete bookMarkMenuHandler;
                 openPage();  
             }
         }
-        else if(bookMarkMenuHandler->menuElements[bookMarkMenuHandler->currentMenuElementIndex].ID==BookMarkMenuHandler::MenuElementID::GotoChapter)
-        {
-            if(bookMarkMenuHandler->currentVerticalElementIndex!=0)
-            {
-                //Device::buzz();
-                int newChapterIndex = epub->get_spine_index_for_toc_index(bookMarkMenuHandler->currentVerticalElementIndex-1);
-                book->currentPage = getCurrentPageAbsolute(newChapterIndex,0);
-                state = State::Reading;
-                delete bookMarkMenuHandler;
-                openPage();  
-            }
-        }
-        
     }
 }

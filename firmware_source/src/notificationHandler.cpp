@@ -162,7 +162,7 @@ void NotificationHandler::drawErrorNotification(std::string bookTitle)
         displayString = displayString.substr(0, 50);
     }
     renderer->drawString(EPD_HEIGHT/2 - displayString.length()*GLYPH_WIDTH/4, originY + 2.5*GLYPH_HEIGHT,displayString,1,true,false,true);
-    displayString = std::string("Please inform the Diptyx development team");
+    displayString = std::string("Please report this problem");
     renderer->drawString(EPD_HEIGHT/2 - displayString.length()*GLYPH_WIDTH/4, originY + 1.5*GLYPH_HEIGHT,displayString,1,false,false,true);
     renderer->epd.DisplayPicture(true,renderer->framebuffer);
 }
@@ -201,7 +201,7 @@ void NotificationHandler::drawSDcardErrorNotification()
 
     std::string displayString = "Error mounting SD card, shutting down :( ";
     renderer->drawString(EPD_HEIGHT/2 - displayString.length()*GLYPH_WIDTH/4, originY + 2.5*GLYPH_HEIGHT,displayString,1,true,false,true);
-    displayString = std::string("Please refer to the Diptyx documentation");
+    displayString = std::string("Please refer to the manual");
     renderer->drawString(EPD_HEIGHT/2 - displayString.length()*GLYPH_WIDTH/4, originY + 1.5*GLYPH_HEIGHT,displayString,1,false,false,true);
     renderer->epd.DisplayPicture(true,renderer->framebuffer);
 }

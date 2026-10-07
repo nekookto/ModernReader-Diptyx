@@ -72,8 +72,17 @@ void ContentParser::parseImage(Image& image, Style& style,bool draw)
     }
     else if(!style.widthSet && !style.heightSet)
     {
-        style.height = std::min(image.imageHeight,EPD_WIDTH);
-        style.width = std::min(image.imageWidth,EPD_HEIGHT);
+        // no size given: keep the natural size, but when the picture is bigger than the page shrink it proportionally
+        int fitW = image.imageWidth, fitH = image.imageHeight;
+        if(fitW > EPD_HEIGHT || fitH > EPD_WIDTH)
+        {
+            float scale = std::min(static_cast<float>(EPD_HEIGHT) / static_cast<float>(fitW),
+                                   static_cast<float>(EPD_WIDTH) / static_cast<float>(fitH));
+            fitW = std::max(1, static_cast<int>(fitW * scale));
+            fitH = std::max(1, static_cast<int>(fitH * scale));
+        }
+        style.height = std::min(fitH,EPD_WIDTH);
+        style.width = std::min(fitW,EPD_HEIGHT);
     }
 
     if(style.height>EPD_WIDTH || style.width>EPD_HEIGHT)

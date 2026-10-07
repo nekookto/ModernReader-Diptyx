@@ -161,6 +161,34 @@ bool Epub::parse_content_opf(ZipFile &zip, std::string &content_opf_file)
     m_author = std::string("unknown author");
   }
   else m_author = author->GetText();
+
+  // optional series info: calibre style <meta name="calibre:series" content="..."/>
+  // or EPUB3 style <meta property="belongs-to-collection">Series</meta>
+  for (auto m = metadata->FirstChildElement("meta"); m; m = m->NextSiblingElement("meta"))
+  {
+    const char *nameAttr = m->Attribute("name");
+    const char *propAttr = m->Attribute("property");
+    if (nameAttr && strcmp(nameAttr, "calibre:series") == 0)
+    {
+      const char *c = m->Attribute("content");
+      if (c && m_series.empty()) m_series = c;
+    }
+    else if (nameAttr && strcmp(nameAttr, "calibre:series_index") == 0)
+    {
+      const char *c = m->Attribute("content");
+      if (c) m_seriesIndex = (float)atof(c);
+    }
+    else if (propAttr && strcmp(propAttr, "belongs-to-collection") == 0)
+    {
+      const char *t = m->GetText();
+      if (t && m_series.empty()) m_series = t;
+    }
+    else if (propAttr && strcmp(propAttr, "group-position") == 0)
+    {
+      const char *t = m->GetText();
+      if (t && m_seriesIndex == 0) m_seriesIndex = (float)atof(t);
+    }
+  }
   auto cover = metadata->FirstChildElement("meta");
 while (cover)
 {

@@ -1,6 +1,5 @@
 UF2_FAMILY_ID = 0x57755a57
 ST_FAMILY = f4
-DEPS_SUBMODULES += lib/CMSIS_5 hw/mcu/st/cmsis_device_$(ST_FAMILY) hw/mcu/st/stm32$(ST_FAMILY)xx_hal_driver
 
 ST_CMSIS = hw/mcu/st/cmsis_device_$(ST_FAMILY)
 ST_HAL_DRIVER = hw/mcu/st/stm32$(ST_FAMILY)xx_hal_driver
@@ -44,13 +43,13 @@ CFLAGS += \
 	-DBOARD_TUH_MAX_SPEED=${RHPORT_HOST_SPEED} \
 
 # GCC Flags
-CFLAGS_GCC += \
+CFLAGS += \
   -flto \
 
 # suppress warning caused by vendor mcu driver
-CFLAGS_GCC += -Wno-error=cast-align
+CFLAGS += -Wno-error=cast-align
 
-LDFLAGS_GCC += \
+LDFLAGS += \
   -nostdlib -nostartfiles \
   --specs=nosys.specs --specs=nano.specs
 
@@ -72,6 +71,7 @@ SRC_C += \
 	$(ST_HAL_DRIVER)/Src/stm32$(ST_FAMILY)xx_hal_gpio.c
 
 INC += \
+	$(TOP)/hw/bsp/stm32$(ST_FAMILY) \
 	$(TOP)/$(BOARD_PATH) \
 	$(TOP)/lib/CMSIS_5/CMSIS/Core/Include \
 	$(TOP)/$(ST_CMSIS)/Include \

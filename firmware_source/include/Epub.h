@@ -24,6 +24,9 @@ private:
   std::string m_title;
   // the author
   std::string m_author;
+  // series info (optional, from calibre:series / belongs-to-collection)
+  std::string m_series;
+  float m_seriesIndex = 0;
   // the cover image
   std::string m_cover_image_item;
   // the ncx file
@@ -53,6 +56,8 @@ public:
   const std::string &get_path() const { return m_path; }
   const std::string &get_title();
   const std::string &get_author();
+  const std::string &get_series() { return m_series; }
+  float get_series_index() { return m_seriesIndex; }
   const std::string &get_cover_image_item();
   uint8_t *get_item_contents(const std::string &item_href, size_t *size = nullptr);
 

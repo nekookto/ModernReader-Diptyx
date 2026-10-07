@@ -15,7 +15,7 @@
 #include "esp_littlefs.h"
 
 
-#define MAX_BOOK_NAME 128
+#define MAX_BOOK_NAME 256
 extern RTC_NOINIT_ATTR char rtc_currently_parsing_book[MAX_BOOK_NAME];
 
 
@@ -48,6 +48,9 @@ public:
     std::string path;
     std::string title;
     std::string author;
+    std::string series;          // series name from metadata (may be empty)
+    float seriesIndex = 0;       // position in series (0 = unknown)
+    bool seriesChecked = false;  // true once the epub metadata was scanned for series info
     int totalPageCount = 0;
     int chapterCount = 0;
     int currentPage = 0;
@@ -55,6 +58,7 @@ public:
     int currentPageChapterIndex = 0;
     bool badParse = false;
     bool favorite = false;
+    uint32_t lastOpened = 0; // open sequence number: higher = opened more recently, 0 = never opened
     std::vector<int> chapterPageCounts;
     std::vector<BookMark> bookMarks;
     std::vector<cachedImage> cachedImages;
@@ -107,6 +111,12 @@ public:
     void transferDataToSD(); //transfer all book data from flash to sd
     void reindexBook(Book *book);
     void refreshFavorites();
+    void markOpened(Book *book); // record that the user just opened this book (for the Recent books list)
+    std::vector<Book*> getRecentBooks(size_t maxCount); // most recently opened first
+    std::string groupNameForBook(const Book *book); // name of the library group the book lives in
+    void regroupLibrary(); // regroup + rebuild the library menu after the grouping setting changed
+    void groupBooks(); // (re)build authorList from bookList using deviceSettings.libraryGrouping
+    void loadMissingSeriesInfo(); // one-time scan of cached books that predate series support
 
     std::vector<Book*> bookList;
 

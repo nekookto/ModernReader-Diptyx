@@ -24,8 +24,8 @@
  * This file is part of the TinyUSB stack.
  */
 
-#ifndef _TUSB_HCD_H_
-#define _TUSB_HCD_H_
+#ifndef TUSB_HCD_H_
+#define TUSB_HCD_H_
 
 #include "common/tusb_common.h"
 #include "osal/osal.h"
@@ -59,7 +59,7 @@ typedef enum {
   HCD_EVENT_XFER_COMPLETE,
 
   USBH_EVENT_FUNC_CALL, // Not an HCD event
-  HCD_EVENT_COUNT
+  HCD_EVENT_INVALID
 } hcd_eventid_t;
 
 typedef struct {
@@ -72,7 +72,6 @@ typedef struct {
     struct {
       uint8_t hub_addr;
       uint8_t hub_port;
-      uint8_t speed;
     } connection;
 
     // XFER_COMPLETE
@@ -84,18 +83,11 @@ typedef struct {
 
     // FUNC_CALL
     struct {
-      void (*func) (void*);
+      void (*func) (void* param);
       void* param;
     }func_call;
   };
 } hcd_event_t;
-
-typedef struct {
-  uint8_t rhport;
-  uint8_t hub_addr;
-  uint8_t hub_port;
-  uint8_t speed;
-} hcd_devtree_info_t;
 
 //--------------------------------------------------------------------+
 // Memory API
@@ -186,13 +178,6 @@ bool hcd_edpt_clear_stall(uint8_t rhport, uint8_t dev_addr, uint8_t ep_addr);
 // USBH implemented API
 //--------------------------------------------------------------------+
 
-// Get device tree information of a device
-// USB device tree can be complicated and manged by USBH, this help HCD to retrieve
-// needed topology info to carry out its work
-extern void hcd_devtree_get_info(uint8_t dev_addr, hcd_devtree_info_t* devtree_info);
-
-//------------- Event API -------------//
-
 // Called by HCD to notify stack
 extern void hcd_event_handler(hcd_event_t const* event, bool in_isr);
 
@@ -239,4 +224,4 @@ void hcd_event_xfer_complete(uint8_t dev_addr, uint8_t ep_addr, uint32_t xferred
  }
 #endif
 
-#endif /* _TUSB_HCD_H_ */
+#endif

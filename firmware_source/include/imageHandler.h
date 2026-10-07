@@ -6,6 +6,7 @@
 #include "ZipFile.h"
 #include "tjpgd.h"
 #include "PNGdec.h"
+#include "progressiveJpeg.h"
 #undef Trace
 
 enum class ImageFormat {
@@ -30,6 +31,7 @@ public:
     int imageWidth = 0;
     int imageHeight = 0;
     bool cached = false;
+    bool progressiveJpeg = false;   // progressive JPEG: decoded by progressiveJpeg.cpp instead of TJpgDec
 private:
     static unsigned int in_func(JDEC* jd, uint8_t* buf, unsigned int len);
     static int out_func(JDEC* jd, void* bitmap, JRECT* rect);

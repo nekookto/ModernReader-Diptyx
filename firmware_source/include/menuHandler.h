@@ -1,4 +1,5 @@
 #pragma once
+#include "doubleTap.h"
 #include <string>
 #include <list>
 #include <vector>
@@ -11,6 +12,7 @@
 #include <map>
 #include <memory>
 #include "UIElements.h"
+#include "menuPanel.h"
 
 class MenuHandler
 {
@@ -25,12 +27,18 @@ class MenuHandler
         void rightPageAction();
         void leftPageAction();
 
+        void scrollSelection(int dir); // dir: -1 = up, +1 = down. A double tap scrolls a full page
+        void openBook(Book *book, const std::string &groupName); // start reading a book from a menu
+        void toggleFavorite(Book *book);
+        void refreshRecentMenu(); // rebuild the "Recent books" menu + the now reading card
+
         void layoutReadMenu(std::vector<Author>& authorList);
         void layoutFontSelect();
         void updateFontSize();
         void updateFontSelect();
         void updateFont();
         
+        PanelInfo buildPanelInfo(); // what to show on the right page
         void drawMenu();
         void drawValuePartial();
         bool buzzDisabled = false;
@@ -44,6 +52,8 @@ class MenuHandler
         std::shared_ptr<MenuElement> readSettingsMenu;
         std::shared_ptr<MenuElement> einkSettingsMenu;
         std::shared_ptr<MenuElement> authorMenu; 
+        std::shared_ptr<RecentMenuElement> recentMenu; // the "now reading" card / recent books list
+        DoubleTapTracker upTap, downTap;
         std::shared_ptr<ValueElement> fontSelectBox; 
         std::shared_ptr<ValueElement> fontSizeBox; 
 

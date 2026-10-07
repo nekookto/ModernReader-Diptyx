@@ -13,6 +13,7 @@
 #include "simpleReader.h"
 #include "renderer.h"
 #include "esp_sleep.h"
+#include "esp_system.h"
 #include "driver/gpio.h"
 #include "nvs_flash.h"
 #include "esp_timer.h"
@@ -107,6 +108,24 @@ void main_task(void *param) {
     renderer->framebuffer = reader->leftPageFrameBuffer; //set it to something, just to be sure
     notificationHandler = new NotificationHandler(renderer);
     device.notificationHandler = notificationHandler;
+
+    // if the last reset was caused by a power dip or a crash, show it briefly (helps finding USB / SD card problems)
+    {
+        esp_reset_reason_t resetReason = esp_reset_reason();
+        const char *resetText = nullptr;
+        if (resetReason == ESP_RST_BROWNOUT) resetText = "Last reset: brownout (low power)";
+        else if (resetReason == ESP_RST_PANIC) resetText = "Last reset: crash (panic)";
+        else if (resetReason == ESP_RST_INT_WDT || resetReason == ESP_RST_TASK_WDT || resetReason == ESP_RST_WDT) resetText = "Last reset: watchdog timeout";
+        const char *crashStage = usb_msc_crash_stage();
+        if (resetText) {
+            char resetMsg[64];
+            if (crashStage[0]) snprintf(resetMsg, sizeof(resetMsg), "%s at: %s", resetText, crashStage);
+            else snprintf(resetMsg, sizeof(resetMsg), "%s", resetText);
+            notificationHandler->drawNotification(resetMsg);
+            vTaskDelay(pdMS_TO_TICKS(4000));
+        }
+        usb_msc_clear_stage();
+    }
     device.sd = sd;
 
     if(!sd->mountedSuccesfully) //check if the sd card is actually loaded before we proceed
@@ -136,9 +155,8 @@ void main_task(void *param) {
                 notificationHandler->drawStorageAccessNotication();
                 Device::buzz();
                 //stop usb cdc and unmount sd card
-                tinyusb_console_deinit(TINYUSB_CDC_ACM_0);
-                tinyusb_cdcacm_deinit(TINYUSB_CDC_ACM_0);
-                tinyusb_driver_uninstall();
+                usb_console_teardown();
+                usb_msc_set_stage("sd unmount");
                 delete(sd);
                 vTaskDelay(10);
 
@@ -156,6 +174,13 @@ void main_task(void *param) {
                     
                 } else {
                     ESP_LOGE(TAG, "USB MSC failed to start");
+                    {
+                        char msg[48];
+                        snprintf(msg, sizeof(msg), "USB storage failed: %s 0x%x", usb_msc_last_failure_stage(), (unsigned)usb_msc_last_failure_code());
+                        notificationHandler->drawNotification(msg);
+                        vTaskDelay(pdMS_TO_TICKS(4000));
+                    }
+                    esp_restart(); // the sd card was unmounted for the transfer, restart to bring everything back
                 }
 
 
@@ -482,9 +507,8 @@ void main_task(void *param) {
         }
 
         //stop usb cdc and unmount sd card
-        tinyusb_console_deinit(TINYUSB_CDC_ACM_0);
-        tinyusb_cdcacm_deinit(TINYUSB_CDC_ACM_0);
-        tinyusb_driver_uninstall();
+        usb_console_teardown();
+        usb_msc_set_stage("sd unmount");
         delete(sd);
         vTaskDelay(10);
 
@@ -502,6 +526,12 @@ void main_task(void *param) {
             
         } else {
             ESP_LOGE(TAG, "USB MSC failed to start");
+                    {
+                        char msg[48];
+                        snprintf(msg, sizeof(msg), "USB storage failed: %s 0x%x", usb_msc_last_failure_stage(), (unsigned)usb_msc_last_failure_code());
+                        notificationHandler->drawNotification(msg);
+                        vTaskDelay(pdMS_TO_TICKS(4000));
+                    }
         }
 
         vTaskDelay(10);
@@ -512,8 +542,8 @@ void main_task(void *param) {
         tinyusb_config_t tusb_cfg = TINYUSB_DEFAULT_CONFIG();
         static const char* s_string_desc[] = {
         (const char[]){0x09, 0x04}, // 0: English (0x0409)
-        "Diptyx",                // 1: Manufacturer
-        "Diptyx E-reader",         // 2: Product
+        "Modern Reader",         // 1: Manufacturer
+        "Modern Reader",         // 2: Product
         "123456",                   // 3: Serial
         "SD Card",                  
         };
