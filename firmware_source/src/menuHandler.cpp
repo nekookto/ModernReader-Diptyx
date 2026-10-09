@@ -3,13 +3,9 @@
 #include "pageShowcase.h"
 #include "device.h"
 #include "esp_log.h"
-#include "usbMassStorage.h"
+#include "usbTransfer.h"
 #include "brand.h"
-#include "driver/adc.h"
-#include "tinyusb.h"
-#include "tinyusb_cdc_acm.h"
-#include "tinyusb_console.h"
-#include "tinyusb_default_config.h"
+#include <cctype>
 
 PageShowcase pageShowcase;
 
@@ -21,6 +17,8 @@ MenuHandler::MenuHandler(Renderer *renderer)
     mainMenu = std::make_shared<MenuElement>(renderer, std::string("Modern Reader"),std::string(""));
     authorMenu = std::make_shared<MenuElement>(renderer, std::string("Library"),std::string("Open & read books"));
     recentMenu = std::make_shared<RecentMenuElement>(renderer, std::string("Recent books"),std::string("Most recently opened first"));
+    searchResultsMenu = std::make_shared<MenuElement>(renderer, std::string("Search results"), std::string("Books matching your search"));
+    searchResultsMenu->setParent(mainMenu);
     settingsMenu = std::make_shared<MenuElement>(renderer, std::string("Settings"),std::string("Edit main settings, render settings, etc."));
     deviceSettingsMenu = std::make_shared<MenuElement>(renderer, std::string("Device settings"),std::string("Edit device behaviour"));
     readSettingsMenu = std::make_shared<MenuElement>(renderer, std::string("Book settings"),std::string("Edit the reading experience"));
@@ -116,6 +114,25 @@ MenuHandler::MenuHandler(Renderer *renderer)
     }
 );
 
+    auto controlsGuideButton = std::make_shared<ActionElement>(
+    renderer,
+    "Controls guide",
+    "Learn the physical buttons",
+    []() {
+        Device::getInstance().state = Device::State::simpleReader;
+        Device::getInstance().activeBookPath = "controlsGuide.epub";
+        Device::getInstance().simpleReader->init("controlsGuide.epub", Device::getInstance().renderer);
+        Device::getInstance().saveAppState();
+    }
+);
+
+    auto searchButton = std::make_shared<ActionElement>(
+    renderer,
+    "Find books",
+    "Search titles, authors and series",
+    [this]() { beginLibrarySearch(); }
+);
+
     auto versionButton = std::make_shared<ActionElement>(
     renderer,
     std::string("Firmware info"),
@@ -127,6 +144,13 @@ MenuHandler::MenuHandler(Renderer *renderer)
         Device::getInstance().simpleReader->init("firmwareVersion.epub",Device::getInstance().renderer);
         Device::getInstance().saveAppState();
     }
+);
+
+    auto refineSearchButton = std::make_shared<ActionElement>(
+    renderer,
+    "Edit search",
+    "Change the search term or filter",
+    [this]() { beginLibrarySearch(); }
 );
 
     auto restoreBookSettingsButton = std::make_shared<ActionElement>(
@@ -164,43 +188,7 @@ auto fileTransferButton = std::make_shared<ActionElement>(
     "Transfer files",
     "Enter USB mass storage mode",
     []() {
-        //stop usb cdc and unmount sd card
-        usb_console_teardown();
-        usb_msc_set_stage("sd unmount");
-        delete(Device::getInstance().sd);
-        vTaskDelay(10);
-        
-
-        if (usb_msc_sdmmc_start(GPIO_NUM_41, GPIO_NUM_40, GPIO_NUM_39, 1) == ESP_OK) {
-            Device::getInstance().notificationHandler->drawManualFileTransfer(false);
-            int timeOutTimer = 0;
-            // Wait until USB cable disconnected (GPIO low)
-            while(gpio_get_level(PAGE_RIGHT_BUTTON)) {
-
-                if(!gpio_get_level(GPIO_NUM_16))
-                {
-                    timeOutTimer += 100;
-                }
-                if(timeOutTimer > 1000 * 60 * 10) //if the device is in filetransfer for longer than 10 minutes without a USB connection, we restart
-                {
-                    break;
-                }
-                vTaskDelay(pdMS_TO_TICKS(100));
-                
-            }
-            Device::getInstance().notificationHandler->drawManualFileTransfer(true);
-            usb_msc_stop();  // stop MSC
-
-            
-        } else {
-            char msg[48];
-            snprintf(msg, sizeof(msg), "USB storage failed: %s 0x%x", usb_msc_last_failure_stage(), (unsigned)usb_msc_last_failure_code());
-            Device::getInstance().notificationHandler->drawNotification(msg);
-            vTaskDelay(pdMS_TO_TICKS(4000));
-        }
-
-        vTaskDelay(10);
-        esp_restart(); //restart the device to init everything properly
+        runUSBFileTransfer();
     }
 );
 
@@ -208,6 +196,9 @@ auto fileTransferButton = std::make_shared<ActionElement>(
     // icons for the tiles
     authorMenu->iconId = IconBook;
     manualButton->iconId = IconHelp;
+    controlsGuideButton->iconId = IconHelp;
+    searchButton->iconId = IconBook;
+    refineSearchButton->iconId = IconSliders;
     versionButton->iconId = IconInfo;
     settingsMenu->iconId = IconGear;
     fileTransferButton->iconId = IconTransfer;
@@ -218,13 +209,16 @@ auto fileTransferButton = std::make_shared<ActionElement>(
     currentElement = authorMenu;
     mainMenu->addChild(recentMenu); // the "now reading" card, shown above the other entries
     mainMenu->addChild(authorMenu);
+    mainMenu->addChild(searchButton);
     mainMenu->addChild(settingsMenu);
     mainMenu->addChild(fileTransferButton);
     settingsMenu->addChild(readSettingsMenu);
     settingsMenu->addChild(deviceSettingsMenu);
     settingsMenu->addChild(einkSettingsMenu);
     settingsMenu->addChild(manualButton);
+    settingsMenu->addChild(controlsGuideButton);
     settingsMenu->addChild(versionButton);
+    searchResultsMenu->addChild(refineSearchButton);
     layoutFontSelect();
     updateFontSize();
     readSettingsMenu->addChild(fontSizeBox);
@@ -253,13 +247,126 @@ auto fileTransferButton = std::make_shared<ActionElement>(
     //drawMenu();
 }
 
+void MenuHandler::beginLibrarySearch()
+{
+    searchEditing = true;
+    searchCharacterIndex = 1;
+    searchMiddleEdgesSeen = Device::getInstance().buttonEdgeCount[MIDDLE_BUTTON];
+    searchLeftPageEdgesSeen = Device::getInstance().buttonEdgeCount[PAGE_LEFT_BUTTON];
+    searchRightPageEdgesSeen = Device::getInstance().buttonEdgeCount[PAGE_RIGHT_BUTTON];
+    upTap.reset();
+    downTap.reset();
+    drawMenu();
+}
+
+void MenuHandler::runLibrarySearch()
+{
+    searchEditing = false;
+    searchResultsMenu->children.clear();
+    auto refineButton = std::make_shared<ActionElement>(
+        renderer,
+        "Edit search",
+        "Change the search term or filter",
+        [this]() { beginLibrarySearch(); }
+    );
+    refineButton->iconId = IconSliders;
+    searchResultsMenu->addChild(refineButton);
+
+    auto lower = [](std::string value) {
+        for (char &c : value) c = (char)std::tolower((unsigned char)c);
+        return value;
+    };
+    const std::string query = lower(searchQuery);
+    int resultCount = 0;
+    for (Book *book : Device::getInstance().bookHandler->bookList)
+    {
+        if (searchFilter == 1 && !book->favorite) continue;
+        if (searchFilter == 2 && book->currentPage != 0) continue;
+        const std::string haystack = lower(book->title + " " + book->author + " " + book->series);
+        if (!query.empty() && haystack.find(query) == std::string::npos) continue;
+        searchResultsMenu->addChild(std::make_shared<BookElement>(renderer, book));
+        resultCount++;
+    }
+
+    static const char *filterNames[] = {"All books", "Favorites", "Unread"};
+    searchResultsMenu->elementDescription = std::to_string(resultCount) + " books · " + filterNames[searchFilter];
+    if (resultCount == 0) searchResultsMenu->elementDescription += " · no matches";
+    searchResultsMenu->selectedChildIndex = 0;
+    currentElement = searchResultsMenu;
+    upTap.reset();
+    downTap.reset();
+    renderer->epd.forceRefresh();
+    drawMenu();
+}
+
+void MenuHandler::drawSearchEditor()
+{
+    static const char *filterNames[] = {"All books", "Favorites", "Unread"};
+    const std::string selectedCharacter(1, searchCharacters[searchCharacterIndex]);
+
+    renderer->framebuffer = leftPageFrameBuffer;
+    renderer->clearScreenBuffer();
+    renderer->drawString(24, 626, "LIBRARY", 1, false, false, true);
+    renderer->drawString(24, 584, "Find books", 2, true, false, true);
+    renderer->drawSquare(20, 572, 440, 2, false);
+    renderer->drawString(28, 522, "Search title, author or series", 1, false, false, true);
+    std::string queryLabel = "Search: " + searchQuery + "_";
+    renderer->drawString(28, 486, queryLabel, 1, true, false, true);
+    renderer->drawString(28, 400, "Add a character", 1, false, false, true);
+    renderer->drawPill(206, 336, 68, 64, true);
+    renderer->drawString(230, 354, selectedCharacter, 2, true, false, false);
+    renderer->drawString(28, 280, std::string("Filter: ") + filterNames[searchFilter], 1, true, false, true);
+    renderer->drawString(28, 238, "Arrow left/right changes the filter", 1, false, false, true);
+    renderer->drawPill(20, 12, 438, 28, false);
+    renderer->drawString(30, 19, "Center: add   Left page: delete   Right page: search", 1, true, false, true);
+
+    renderer->framebuffer = rightPageFrameBuffer;
+    renderer->clearScreenBuffer();
+    renderer->drawString(24, 626, "BUTTONS", 1, false, false, true);
+    renderer->drawString(24, 584, "Search controls", 2, true, false, true);
+    renderer->drawSquare(20, 572, 440, 2, false);
+    renderer->drawString(28, 516, "Up / Down", 1, true, false, true);
+    renderer->drawString(28, 486, "Choose a letter or space", 1, false, false, true);
+    renderer->drawString(28, 426, "Center", 1, true, false, true);
+    renderer->drawString(28, 396, "Add the selected character", 1, false, false, true);
+    renderer->drawString(28, 336, "Left page", 1, true, false, true);
+    renderer->drawString(28, 306, searchQuery.empty() ? "Return to the library" : "Delete the last character", 1, false, false, true);
+    renderer->drawString(28, 246, "Right page", 1, true, false, true);
+    renderer->drawString(28, 216, "Show matching books", 1, false, false, true);
+    renderer->drawPill(20, 12, 438, 28, false);
+    renderer->drawString(30, 19, "Filter: ", 1, true, false, true);
+    renderer->drawString(96, 19, filterNames[searchFilter], 1, true, false, true);
+
+    renderer->drawBattery(rightPageFrameBuffer, Device::getInstance().getBatteryPercentage());
+    renderer->epd.DisplayPictureBoth(leftPageFrameBuffer, rightPageFrameBuffer);
+}
+
+void MenuHandler::searchFilterButtonAction(int dir)
+{
+    if (!searchEditing) return;
+    searchFilter = (searchFilter + dir + 3) % 3;
+    drawMenu();
+}
+
 void MenuHandler::upButtonAction()
 {
+    if (searchEditing)
+    {
+        searchCharacterIndex = (searchCharacterIndex + (int)searchCharacters.size() - 1) % (int)searchCharacters.size();
+        drawMenu();
+        return;
+    }
     scrollSelection(-1);
 }
 
 void MenuHandler::downButtonAction()
 {
+    if (searchEditing)
+    {
+        searchCharacterIndex = (searchCharacterIndex + 1) % (int)searchCharacters.size();
+        drawMenu();
+        return;
+    }
     scrollSelection(1);
 }
 
@@ -304,11 +411,16 @@ void MenuHandler::toggleFavorite(Book *book)
 {
     book->favorite = !book->favorite;
     Device::getInstance().bookHandler->saveBook(book); //store the updated book
-    if(!authorMenu->selectedChildIndex==0) Device::getInstance().bookHandler->refreshFavorites(); //update the favorites vector
+    Device::getInstance().bookHandler->refreshFavorites(); //update the favorites vector
     auto favoriteListElement = std::static_pointer_cast<AuthorElement>(authorMenu->children[0]);
     favoriteListElement->initChildren(); //and update the UI element
     favoriteListElement->elementDescription = "Books: " + std::to_string(favoriteListElement->author->bookList.size());
     if(favoriteListElement->selectedChildIndex>=favoriteListElement->children.size()) favoriteListElement->selectedChildIndex = favoriteListElement->children.size()-1;
+    if (currentElement == searchResultsMenu)
+    {
+        runLibrarySearch();
+        return;
+    }
     drawMenu();
 }
 
@@ -336,7 +448,9 @@ void MenuHandler::openBook(Book *book, const std::string &groupName)
     renderer->epd.forceRefresh();
     Device::getInstance().state=Device::State::Reading;
     Device::getInstance().activeBookPath = book->path;
-    Device::getInstance().activeAuthorName = groupName;
+    Device::getInstance().activeAuthorName = (currentElement == recentMenu || currentElement == searchResultsMenu)
+        ? Device::getInstance().bookHandler->groupNameForBook(book)
+        : groupName;
     Device::getInstance().saveAppState();
     reader->openPage();
 }
@@ -359,6 +473,17 @@ void MenuHandler::middleButtonAction()
 {
     upTap.reset();
     downTap.reset();
+    if (searchEditing)
+    {
+        uint32_t edges = Device::getInstance().buttonEdgeCount[MIDDLE_BUTTON];
+        if (edges == searchMiddleEdgesSeen) return;
+        searchMiddleEdgesSeen = edges;
+        char selected = searchCharacters[searchCharacterIndex];
+        if (searchQuery.size() < 30 && (selected != ' ' || (!searchQuery.empty() && searchQuery.back() != ' ')))
+            searchQuery += selected;
+        drawMenu();
+        return;
+    }
     if(currentElement->getType()==UIElementType::Menu || currentElement->getType()==UIElementType::Author)
     {    
         auto menu = std::static_pointer_cast<MenuElement>(currentElement);
@@ -389,7 +514,9 @@ void MenuHandler::middleButtonAction()
             {
                 // middle button = enter: open the book
                 auto bookElement = std::static_pointer_cast<BookElement>(menu->children[menu->selectedChildIndex]);
-                std::string groupName = (menu == recentMenu) ? Device::getInstance().bookHandler->groupNameForBook(bookElement->book) : menu->elementName;
+                std::string groupName = (menu == recentMenu || menu == searchResultsMenu)
+                    ? Device::getInstance().bookHandler->groupNameForBook(bookElement->book)
+                    : menu->elementName;
                 openBook(bookElement->book, groupName);
             }
             else if(menu->children[menu->selectedChildIndex]->getType()==UIElementType::Value)
@@ -443,6 +570,20 @@ void MenuHandler::rightButtonAction()
 
 void MenuHandler::rightPageAction()
 {
+    uint32_t edges = Device::getInstance().buttonEdgeCount[PAGE_RIGHT_BUTTON];
+    if (searchRightPageJustSearched)
+    {
+        if (edges == searchRightPageEdgesSeen) return;
+        searchRightPageJustSearched = false;
+    }
+    if (searchEditing)
+    {
+        if (edges == searchRightPageEdgesSeen) return;
+        searchRightPageEdgesSeen = edges;
+        searchRightPageJustSearched = true;
+        runLibrarySearch();
+        return;
+    }
     rightButtonAction();
 }
 
@@ -455,6 +596,20 @@ void MenuHandler::leftButtonAction()
 {
     upTap.reset();
     downTap.reset();
+    if (searchEditing)
+    {
+        uint32_t edges = Device::getInstance().buttonEdgeCount[PAGE_LEFT_BUTTON];
+        if (edges == searchLeftPageEdgesSeen) return;
+        searchLeftPageEdgesSeen = edges;
+        if (!searchQuery.empty()) searchQuery.pop_back();
+        else
+        {
+            searchEditing = false;
+            currentElement = mainMenu;
+        }
+        drawMenu();
+        return;
+    }
     if (auto menu = std::static_pointer_cast<MenuElement>(currentElement)) {
         if(menu->children.size()>0 && menu->children[menu->selectedChildIndex]->getType()==UIElementType::Value &&
         std::static_pointer_cast<ValueElement>(menu->children[menu->selectedChildIndex])->selected)
@@ -620,7 +775,7 @@ PanelInfo MenuHandler::buildPanelInfo()
             }
         }
     }
-    else if ((currentElement->getType() == UIElementType::Author || currentElement == recentMenu) && selected && selected->getType() == UIElementType::Book)
+    else if ((currentElement->getType() == UIElementType::Author || currentElement == recentMenu || currentElement == searchResultsMenu) && selected && selected->getType() == UIElementType::Book)
     {
         // details of the selected book
         info.kind = PanelInfo::Kind::BookDetail;
@@ -672,27 +827,34 @@ void MenuHandler::drawMenu()
     Device::getInstance().clearButtonLatches();
     Device::getInstance().setLatchTimeOut(200000);
     //this->displayIdleCallbackReturn = nullptr;
-    renderer->framebuffer = this->leftPageFrameBuffer;
-    std::static_pointer_cast<MenuElement>(currentElement)->renderElement();
-
-    //renderer->epd.DisplayPicture(true, renderer->framebuffer);
-
-    renderer->clearScreenBuffer(rightPageFrameBuffer);
-    if(currentElement==readSettingsMenu)
+    if (searchEditing)
     {
-        const char *html = pageShowcase.getPage();
-        HtmlParser *parser = nullptr;
-        parser = new HtmlParser(html, pageShowcase.size(), "",this->renderer,0,nullptr,rightPageFrameBuffer,Device::getInstance().reader->leftPageFrameBuffer); //dump the right page into the readers framebuffer
-        parser->parse();
-        delete parser;
+        drawSearchEditor();
     }
     else
     {
-        renderer->framebuffer = rightPageFrameBuffer; //info panel: library overview, book details, group contents, setting help
-        drawMenuPanel(*renderer, buildPanelInfo());
+        renderer->framebuffer = this->leftPageFrameBuffer;
+        std::static_pointer_cast<MenuElement>(currentElement)->renderElement();
+
+        //renderer->epd.DisplayPicture(true, renderer->framebuffer);
+
+        renderer->clearScreenBuffer(rightPageFrameBuffer);
+        if(currentElement==readSettingsMenu)
+        {
+            const char *html = pageShowcase.getPage();
+            HtmlParser *parser = nullptr;
+            parser = new HtmlParser(html, pageShowcase.size(), "",this->renderer,0,nullptr,rightPageFrameBuffer,Device::getInstance().reader->leftPageFrameBuffer); //dump the right page into the readers framebuffer
+            parser->parse();
+            delete parser;
+        }
+        else
+        {
+            renderer->framebuffer = rightPageFrameBuffer; //info panel: library overview, book details, group contents, setting help
+            drawMenuPanel(*renderer, buildPanelInfo());
+        }
+        this->renderer->drawBattery(rightPageFrameBuffer,Device::getInstance().getBatteryPercentage());
+        renderer->epd.DisplayPictureBoth(leftPageFrameBuffer,rightPageFrameBuffer);
     }
-    this->renderer->drawBattery(rightPageFrameBuffer,Device::getInstance().getBatteryPercentage());
-    renderer->epd.DisplayPictureBoth(leftPageFrameBuffer,rightPageFrameBuffer);
 
     if(Device::getInstance().buttonLatchedStates[MIDDLE_BUTTON]) {middleButtonAction(); return;}
     if(Device::getInstance().buttonLatchedStates[PAGE_RIGHT_BUTTON]) {rightPageAction(); return;}

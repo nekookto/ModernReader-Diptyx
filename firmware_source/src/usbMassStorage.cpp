@@ -242,6 +242,7 @@ esp_err_t usb_msc_sdmmc_start(gpio_num_t clk, gpio_num_t cmd, gpio_num_t d0, int
     tinyusb_msc_storage_config_t storage_cfg = {};
     storage_cfg.medium.card = s_card;
     storage_cfg.mount_point = TINYUSB_MSC_STORAGE_MOUNT_USB;
+    storage_cfg.fat_fs.do_not_format = true; // a safe-eject remount must never format the user's SD card
 
     ret = tinyusb_msc_new_storage_sdmmc(&storage_cfg, &s_msc_handle);
     if (ret != ESP_OK) {

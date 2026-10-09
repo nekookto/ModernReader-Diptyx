@@ -33,6 +33,7 @@ public:
     std::vector <bool> pageImagePresent {false,false,false};
     bool imagePreviouslyPresent = false;
     bool exitGuideEnabled = false;
+    bool isControlsGuide = false;
 
     //int currentPage = 0;
     int currentChapter = 0;
@@ -46,6 +47,7 @@ public:
     void prevPage(void);
     void openPage(void);
     void middleButtonAction();
+    void finishCurrentBook();
     void rightPageAction();
     void leftPageAction();
 

@@ -389,7 +389,7 @@ void BookMarkMenuHandler::drawChapterList(bool fullRefresh)
     drawColumn(leftPageFrameBuffer, chapterTop, leftCount, CL_LEFT_TOP);
     renderer->framebuffer = leftPageFrameBuffer;
     renderer->drawPill(CL_MARGIN, 12, 224, 28, false);
-    renderer->drawString(CL_MARGIN + 12, 19, "Middle: open   Left: back", 1, true, false, true);
+    renderer->drawString(CL_MARGIN + 12, 19, "Up/Down: move · Center: open", 1, true, false, true);
 
     // Right screen: repeat the header so the continuation reads as one designed spread.
     renderer->framebuffer = rightPageFrameBuffer;
@@ -401,7 +401,7 @@ void BookMarkMenuHandler::drawChapterList(bool fullRefresh)
     drawColumn(rightPageFrameBuffer, chapterTop + leftCount, rightCount, CL_RIGHT_TOP);
     renderer->framebuffer = rightPageFrameBuffer;
     renderer->drawPill(CL_MARGIN, 12, 250, 28, false);
-    renderer->drawString(CL_MARGIN + 12, 19, "Double-tap Up / Down: page", 1, true, false, true);
+    renderer->drawString(CL_MARGIN + 12, 19, "Left page: back · Right page: open · Double-tap: page", 1, true, false, true);
 
     if (fullRefresh) renderer->epd.forceRefresh();
     else renderer->epd.partialUpdatesRemaining[true] = 8;

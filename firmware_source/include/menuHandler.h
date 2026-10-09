@@ -26,6 +26,8 @@ class MenuHandler
         void downButtonAction();
         void rightPageAction();
         void leftPageAction();
+        void searchFilterButtonAction(int dir);
+        void beginLibrarySearch();
 
         void scrollSelection(int dir); // dir: -1 = up, +1 = down. A double tap scrolls a full page
         void openBook(Book *book, const std::string &groupName); // start reading a book from a menu
@@ -53,6 +55,7 @@ class MenuHandler
         std::shared_ptr<MenuElement> einkSettingsMenu;
         std::shared_ptr<MenuElement> authorMenu; 
         std::shared_ptr<RecentMenuElement> recentMenu; // the "now reading" card / recent books list
+        std::shared_ptr<MenuElement> searchResultsMenu;
         DoubleTapTracker upTap, downTap;
         std::shared_ptr<ValueElement> fontSelectBox; 
         std::shared_ptr<ValueElement> fontSizeBox; 
@@ -60,5 +63,15 @@ class MenuHandler
         unsigned char* leftPageFrameBuffer;
         unsigned char* rightPageFrameBuffer;
     private:
-
+        void drawSearchEditor();
+        void runLibrarySearch();
+        bool searchEditing = false;
+        std::string searchQuery;
+        const std::string searchCharacters = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-'";
+        int searchCharacterIndex = 1;
+        int searchFilter = 0; // 0 = all, 1 = favorites, 2 = unread
+        uint32_t searchMiddleEdgesSeen = 0;
+        uint32_t searchLeftPageEdgesSeen = 0;
+        uint32_t searchRightPageEdgesSeen = 0;
+        bool searchRightPageJustSearched = false;
 };

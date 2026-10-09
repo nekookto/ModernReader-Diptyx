@@ -41,6 +41,8 @@ void SimpleReader::init(std::string bookName,Renderer* renderer)
 {
     this->renderer = renderer;
     this->currentBookPath = bookName;
+    this->isControlsGuide = (bookName == "controlsGuide.epub");
+    this->exitGuideEnabled = false;
     this->currentChapter = 0;
 
     this->epub = new Epub(std::string("/assets/") + this->currentBookPath);
@@ -187,18 +189,7 @@ void SimpleReader::nextPage()
     Device::getInstance().setLatchTimeOut(50000);
     if(book->currentPage >= book->totalPageCount-2)
     {
-        if (epub) {
-            delete epub;
-        }
-
-        if(book) {
-            delete book;
-        }
-        Device::getInstance().state=Device::State::Menu;
-        renderer->epd.forceRefresh();
-
-        Device::getInstance().menuHandler->drawMenu();
-        Device::getInstance().saveAppState();
+        finishCurrentBook();
         return;
     }
     book->currentPage += 2;
@@ -388,9 +379,43 @@ void SimpleReader::rightPageAction()
 
 void SimpleReader::middleButtonAction()
 {
+    if (isControlsGuide)
+    {
+        Device::getInstance().suppressMiddleButtonUntilRelease = true;
+        finishCurrentBook();
+        return;
+    }
     if(exitGuideEnabled==false)
     {
         exitGuideEnabled = true;
         openPage();
     }
+}
+
+void SimpleReader::finishCurrentBook()
+{
+    Device &device = Device::getInstance();
+    if (isControlsGuide)
+    {
+        device.deviceSettings.controlsGuideSeen = true;
+        device.saveSettings();
+    }
+    if (epub)
+    {
+        delete epub;
+        epub = nullptr;
+    }
+    if (book)
+    {
+        delete book;
+        book = nullptr;
+    }
+    isControlsGuide = false;
+    exitGuideEnabled = false;
+    device.state = Device::State::Menu;
+    device.activeBookPath.clear();
+    device.activeAuthorName.clear();
+    renderer->epd.forceRefresh();
+    device.menuHandler->drawMenu();
+    device.saveAppState();
 }

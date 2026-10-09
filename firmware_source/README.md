@@ -7,6 +7,7 @@ It is not affiliated with or endorsed by Diptyx.
 Build with PlatformIO and ESP-IDF. When updating the change log, append a new version to `CHANGELOG.md` (keep earlier entries), then regenerate the built-in Firmware info EPUB from that full history:
 
 ```sh
+python scripts/build_controls_guide_epub.py
 python scripts/build_firmware_info_epub.py
 pio run -t buildfs
 pio run

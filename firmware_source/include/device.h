@@ -53,6 +53,7 @@ public:
         int vcomLeft = 23;
         int vcomRight = 23;
         int libraryGrouping = 1; // 0 = by author, 1 = by series / title (default), 2 = by folder
+        bool controlsGuideSeen = false;
     };
 
     // Access the singleton instance
@@ -101,6 +102,7 @@ public:
     int activeAuthorIndex = -1;
     volatile int buttonStates[7] = {0};
     volatile int buttonLatchedStates[7] = {0};
+    volatile bool suppressMiddleButtonUntilRelease = false;
 
     // // Example methods
     // void turnOn() { state = State::Active; }

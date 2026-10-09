@@ -18,6 +18,7 @@
 #include "nvs_flash.h"
 #include "esp_timer.h"
 #include "usbMassStorage.h"
+#include "usbTransfer.h"
 #include "driver/adc.h"
 #include "tinyusb.h"
 #include "tinyusb_cdc_acm.h"
@@ -154,35 +155,7 @@ void main_task(void *param) {
             {
                 notificationHandler->drawStorageAccessNotication();
                 Device::buzz();
-                //stop usb cdc and unmount sd card
-                usb_console_teardown();
-                usb_msc_set_stage("sd unmount");
-                delete(sd);
-                vTaskDelay(10);
-
-                ESP_LOGI(TAG, "USB Mass Storage mode");
-                if (usb_msc_sdmmc_start(GPIO_NUM_41, GPIO_NUM_40, GPIO_NUM_39, 1) == ESP_OK) {
-
-                    // Wait until USB cable disconnected (GPIO low)
-                    while(gpio_get_level(GPIO_NUM_16)) {
-                        vTaskDelay(10);
-                    }
-
-                    ESP_LOGI(TAG, "USB disconnected, stopping MSC...");
-                    usb_msc_stop();  // stop MSC
-                    esp_restart();
-                    
-                } else {
-                    ESP_LOGE(TAG, "USB MSC failed to start");
-                    {
-                        char msg[48];
-                        snprintf(msg, sizeof(msg), "USB storage failed: %s 0x%x", usb_msc_last_failure_stage(), (unsigned)usb_msc_last_failure_code());
-                        notificationHandler->drawNotification(msg);
-                        vTaskDelay(pdMS_TO_TICKS(4000));
-                    }
-                    esp_restart(); // the sd card was unmounted for the transfer, restart to bring everything back
-                }
-
+                runUSBFileTransfer();
 
             }
 
@@ -246,6 +219,13 @@ void main_task(void *param) {
         }
     }
 
+    if (!device.deviceSettings.controlsGuideSeen && !safeboot)
+    {
+        device.state = Device::State::simpleReader;
+        device.activeBookPath = "controlsGuide.epub";
+        device.activeAuthorName.clear();
+        device.saveAppState();
+    }
 
     if(device.state==Device::State::Menu)//boot into the bookmenu
     {
@@ -426,7 +406,7 @@ void main_task(void *param) {
                 simpleReader->leftPageAction();
             }
         }
-        if(device.buttonLatchedStates[MIDDLE_BUTTON] || device.buttonStates[MIDDLE_BUTTON])
+        if(!device.suppressMiddleButtonUntilRelease && (device.buttonLatchedStates[MIDDLE_BUTTON] || device.buttonStates[MIDDLE_BUTTON]))
         {
             if(device.usb_state==Device::usbState::FileTransfer || device.usb_state==Device::usbState::Query)
             {
@@ -444,6 +424,14 @@ void main_task(void *param) {
             {
                 simpleReader->middleButtonAction();
             }
+        }
+        if(device.state==Device::State::Menu && device.buttonLatchedStates[ARROW_LEFT_BUTTON])
+        {
+            menuHandler->searchFilterButtonAction(-1);
+        }
+        if(device.state==Device::State::Menu && device.buttonLatchedStates[ARROW_RIGHT_BUTTON])
+        {
+            menuHandler->searchFilterButtonAction(1);
         }
         if(device.buttonLatchedStates[ARROW_UP_BUTTON] || device.buttonStates[ARROW_UP_BUTTON])
         {
@@ -501,62 +489,7 @@ void main_task(void *param) {
         }
     //check if we have entered file transfer mode
     if(device.state == Device::State::USB_FileTransfer) {
-        if(device.reader->book)
-        {
-            device.bookHandler->saveBook(device.reader->book);
-        }
-
-        //stop usb cdc and unmount sd card
-        usb_console_teardown();
-        usb_msc_set_stage("sd unmount");
-        delete(sd);
-        vTaskDelay(10);
-
-        ESP_LOGI(TAG, "USB Mass Storage mode");
-        if (usb_msc_sdmmc_start(GPIO_NUM_41, GPIO_NUM_40, GPIO_NUM_39, 1) == ESP_OK) {
-
-            // Wait until USB cable disconnected (GPIO low)
-            while(gpio_get_level(GPIO_NUM_16)) {
-                vTaskDelay(10);
-            }
-
-            ESP_LOGI(TAG, "USB disconnected, stopping MSC...");
-            usb_msc_stop();  // stop MSC
-
-            
-        } else {
-            ESP_LOGE(TAG, "USB MSC failed to start");
-                    {
-                        char msg[48];
-                        snprintf(msg, sizeof(msg), "USB storage failed: %s 0x%x", usb_msc_last_failure_stage(), (unsigned)usb_msc_last_failure_code());
-                        notificationHandler->drawNotification(msg);
-                        vTaskDelay(pdMS_TO_TICKS(4000));
-                    }
-        }
-
-        vTaskDelay(10);
-        //remount the sd card
-        sd = new SDCard("/sdcard", GPIO_NUM_41, GPIO_NUM_40, GPIO_NUM_39);
-
-        //restart usb cdc:
-        tinyusb_config_t tusb_cfg = TINYUSB_DEFAULT_CONFIG();
-        static const char* s_string_desc[] = {
-        (const char[]){0x09, 0x04}, // 0: English (0x0409)
-        "Modern Reader",         // 1: Manufacturer
-        "Modern Reader",         // 2: Product
-        "123456",                   // 3: Serial
-        "SD Card",                  
-        };
-    tusb_cfg.descriptor.string              = s_string_desc;
-    tusb_cfg.descriptor.string_count        = sizeof(s_string_desc) / sizeof(s_string_desc[0]);
-        ESP_ERROR_CHECK(tinyusb_driver_install(&tusb_cfg));
-        tinyusb_config_cdcacm_t acm_cfg = {
-            .cdc_port = TINYUSB_CDC_ACM_0,
-        };
-        ESP_ERROR_CHECK(tinyusb_cdcacm_init(&acm_cfg));
-        ESP_ERROR_CHECK(tinyusb_console_init(TINYUSB_CDC_ACM_0));
-
-        esp_restart(); //restart the device to init everything properly
+        runUSBFileTransfer();
     }
 
 

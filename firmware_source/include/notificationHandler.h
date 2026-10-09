@@ -18,7 +18,7 @@ class NotificationHandler
 
         
         void drawUSBQuery();
-        void drawManualFileTransfer(bool disconnect);
+        void drawUSBTransferStatus(const std::string &title, const std::string &detail, bool safeToUnplug);
         void drawIndexingNotification(std::string bookTitle);
         void drawIndexingNotification(std::string bookTitle,int percent);
         void drawBookOpeningNotification(std::string bookTitle);

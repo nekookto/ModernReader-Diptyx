@@ -1,7 +1,24 @@
 # Modern Reader change log
 
-A running log of what differs from the original Diptyx firmware (base: Diptyx firmware 1.0.2).
-The same text is shown on the device under Settings -> Firmware info. Newest release first.
+Modern Reader is based on Diptyx firmware 1.0.2. This log lists the changes in each release, newest first. The same history is available on the reader under Settings -> Firmware info.
+
+## 1.0.2
+
+### Library
+- Added **Find books** to search titles, authors and series, with filters for all books, favorites or unread books.
+- Opening a search result keeps the book in its usual library group.
+
+### Reading and setup
+- Chapter-list hints now name the physical controls, including double-tap scrolling.
+- A short controls guide appears on first start and can be opened again from Settings.
+
+### USB file transfer
+- The transfer screen shows when the reader is waiting for a cable, connected, or ready to unplug.
+- The reader recognizes the computer's safe-eject command and warns if the cable is removed first.
+- The same transfer steps are used from the menu and at startup.
+
+### Firmware info
+- Updated the built-in firmware info book with these release notes.
 
 ## 1.0.1
 

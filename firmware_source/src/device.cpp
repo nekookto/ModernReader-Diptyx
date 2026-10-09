@@ -73,6 +73,7 @@ void Device::saveSettings() {
     cJSON_AddNumberToObject(device, "standbyShutdown", deviceSettings.standbyShutdown);
     cJSON_AddNumberToObject(device, "sunlightFullRefresh", deviceSettings.sunlightFullRefresh);
     cJSON_AddNumberToObject(device, "libraryGrouping", deviceSettings.libraryGrouping);
+    cJSON_AddNumberToObject(device, "controlsGuideSeen", deviceSettings.controlsGuideSeen);
     cJSON_AddNumberToObject(device, "vcomLeft", deviceSettings.vcomLeft);
     cJSON_AddNumberToObject(device, "vcomRight", deviceSettings.vcomRight);
     cJSON_AddItemToObject(root, "deviceSettings", device);
@@ -182,6 +183,8 @@ void Device::loadSettings() {
                     deviceSettings.sunlightFullRefresh = j->valueint;
                 if ((j = cJSON_GetObjectItem(device, "libraryGrouping")) && cJSON_IsNumber(j))
                     deviceSettings.libraryGrouping = j->valueint;
+                if ((j = cJSON_GetObjectItem(device, "controlsGuideSeen")) && cJSON_IsNumber(j))
+                    deviceSettings.controlsGuideSeen = j->valueint;
                 if ((j = cJSON_GetObjectItem(device, "vcomLeft")) && cJSON_IsNumber(j))
                     deviceSettings.vcomLeft = j->valueint;
                 if ((j = cJSON_GetObjectItem(device, "vcomRight")) && cJSON_IsNumber(j))
@@ -322,6 +325,8 @@ void Device::pollButtons()
         bool buttonPress = false;
         if(!gpio_get_level(button_pins[i]) && !buttonStates[button_pins[i]]) buttonPress=true;
         buttonStates[button_pins[i]] = !gpio_get_level(button_pins[i]);
+        if (button_pins[i] == MIDDLE_BUTTON && !buttonStates[button_pins[i]])
+            suppressMiddleButtonUntilRelease = false;
         if(buttonPress)
         {
             buttonEdgeMs[button_pins[i]] = (uint32_t)(esp_timer_get_time() / 1000);
